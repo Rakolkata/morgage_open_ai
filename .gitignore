@@ -1,0 +1,26 @@
+# Local model checkpoints and downloaded weights
+/models/
+*.safetensors
+*.bin
+*.pt
+*.pth
+
+# Mortgage PDFs and extracted output may contain sensitive information
+/data/
+*.pdf
+*.verified.json
+
+# Local images and Python environments
+/offline-images.tar
+/.venv/
+/.venvs/
+venv/
+__pycache__/
+*.py[cod]
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+hf_*
+*.log

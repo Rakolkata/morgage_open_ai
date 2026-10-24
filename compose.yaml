@@ -1,0 +1,60 @@
+services:
+  vllm:
+    image: vllm/vllm-openai:v0.10.2
+    command:
+      - --model
+      - /models/DeepSeek-R1-Distill-Qwen-14B
+      - --served-model-name
+      - mortgage-qwen
+      - --dtype
+      - auto
+      - --max-model-len
+      - "32768"
+      - --host
+      - 0.0.0.0
+    environment:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      - ${MODEL_DIR:-./models/DeepSeek-R1-Distill-Qwen-14B}:/models/DeepSeek-R1-Distill-Qwen-14B:ro
+    gpus: all
+    networks:
+      - airgap
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 5m
+    restart: unless-stopped
+
+  pipeline:
+    image: mortgage-pipeline:offline-v1
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["processing"]
+    environment:
+      VLLM_BASE_URL: http://vllm:8000/v1
+      VLLM_MODEL: mortgage-qwen
+      VLLM_TIMEOUT_SECONDS: "600"
+    volumes:
+      - ${INBOX_DIR:-./data/inbox}:/data/inbox:ro
+      - ${OUTBOX_DIR:-./data/outbox}:/data/outbox:rw
+    networks:
+      - airgap
+    depends_on:
+      vllm:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  airgap:
+    driver: bridge
+    internal: true
