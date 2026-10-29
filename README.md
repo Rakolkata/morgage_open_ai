@@ -6,37 +6,117 @@ The pipeline follows the supplied flowchart: page classification and filtering o
 
 ## Offline deployment
 
-This setup requires a Linux Docker host with an NVIDIA GPU and compatible NVIDIA Container Toolkit. Docker Desktop on Windows requires its Linux/WSL2 GPU configuration. For a truly offline target:
+This procedure targets **Ubuntu Server** on a Linux host with an NVIDIA GPU. Prepare the isolated machine before disconnecting it: Ubuntu, Docker Engine with the Compose plugin, the NVIDIA driver, and NVIDIA Container Toolkit must already be installed and working. An offline host cannot fetch missing drivers, container images, Python packages, or model files. Commands below assume your account can run Docker; if you add your account to the `docker` group, note that group grants root-equivalent control of the host.
 
-1. On a separate, approved staging system, download the approved model checkpoint and obtain the versioned vLLM image `vllm/vllm-openai:v0.10.2`. For example, with the Hugging Face CLI already installed and authorized on that staging system:
+### 1. Prepare artifacts on a connected Ubuntu staging machine
 
-   ```powershell
-   hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-14B --local-dir models\DeepSeek-R1-Distill-Qwen-14B
-   docker pull vllm/vllm-openai:v0.10.2
-   docker compose build pipeline
-   ```
+Use an approved staging machine and model access. Install Docker Engine/Compose and the NVIDIA driver/toolkit following the approved Ubuntu instructions for that system; the Hugging Face CLI and Docker need network access at this stage:
 
-   Review and scan these artifacts under your organization's process.
-2. Transfer the model directory, container images, and this project to the isolated host using approved media. The model directory must contain the model configuration, tokenizer, and weight shards. Do not mount credentials or use Hugging Face credentials on the isolated host.
-3. Load the images on the target host with `docker load -i offline-images.tar`, create the local inbox/outbox directories, and place the model files under `models/DeepSeek-R1-Distill-Qwen-14B`.
-4. Run the services and a document. The output filename is based on a prefix of the input's SHA-256 digest rather than its potentially identifying source filename:
+```bash
+cd /path/to/AI
+sudo apt-get update
+sudo apt-get install -y python3 python3-venv
+python3 -m venv .venv-hf
+. .venv-hf/bin/activate
+  python -m pip install --upgrade pip huggingface_hub
 
-   ```powershell
-   New-Item -ItemType Directory -Force data\inbox,data\outbox | Out-Null
-   docker compose up -d vllm
-   Copy-Item 'C:\approved\loan-package.pdf' 'data\inbox\loan-package.pdf'
-   docker compose run --rm pipeline /data/inbox/loan-package.pdf
-   Get-ChildItem data\outbox\*.verified.json
-   docker compose down
-   ```
+# Authenticate only if the approved model repository requires it.
+hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-14B \
+  --local-dir models/DeepSeek-R1-Distill-Qwen-14B
 
-Build/package on staging (not the isolated host):
-
-```powershell
-docker save vllm/vllm-openai:v0.10.2 mortgage-pipeline:offline-v1 -o offline-images.tar
+docker pull vllm/vllm-openai:v0.10.2
+docker compose build pipeline
+docker save \
+  vllm/vllm-openai:v0.10.2 \
+  mortgage-pipeline:offline-v1 \
+  --output offline-images.tar
+deactivate
 ```
 
-The pipeline image build installs pinned Python dependencies and the spaCy English model, and therefore requires staging-time package access. Runtime is configured for Hugging Face offline mode; it does not download model files. Do not run `docker compose pull` or build on the isolated host.
+Review and scan the downloaded checkpoint and images according to your organization's process. Confirm the model directory contains its configuration, tokenizer, and all weight shards. Transfer `offline-images.tar`, the complete project directory (including `compose.yaml` and `.dockerignore`), and the model directory to the Ubuntu target using approved media. Never transfer Hugging Face credentials. Avoid placing actual loan PDFs in the transfer bundle.
+
+### 2. Verify prerequisites on the Ubuntu target
+
+After transferring the files, run these checks on the target. `nvidia-smi` should show the GPU, and Docker must be able to access it:
+
+```bash
+nvidia-smi
+docker --version
+docker compose version
+docker run --rm --gpus all \
+  --entrypoint python3 \
+  vllm/vllm-openai:v0.10.2 \
+  -c 'import torch; assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))'
+```
+
+If these commands fail, resolve the driver, Docker Compose, or NVIDIA Container Toolkit setup before proceeding. Check the image/model files are present, then load the container images:
+
+```bash
+cd /path/to/AI
+test -f offline-images.tar
+test -f models/DeepSeek-R1-Distill-Qwen-14B/config.json
+docker load --input offline-images.tar
+```
+
+The target needs no Hugging Face login, external model cache, or Internet connection at runtime. Do not run `docker pull`, `docker compose pull`, or `docker compose build` on it.
+
+#### Troubleshooting NVIDIA cgroup/device-rule errors
+
+If `docker compose up -d vllm` fails before the container starts with an error such as `nvidia-container-cli: mount error: failed to add device rules` or `BPF_CGROUP_DEVICE ... operation not permitted`, this is the NVIDIA Container Toolkit / Docker GPU runtime setup, not a model-loading problem. First check whether the GPU works on the Ubuntu host and capture Docker's cgroup configuration:
+
+```bash
+nvidia-smi
+docker info --format 'Cgroup driver: {{.CgroupDriver}}; cgroup version: {{.CgroupVersion}}; runtimes: {{json .Runtimes}}'
+```
+
+If `nvidia-smi` works on the host but the GPU-container check fails, verify that NVIDIA Container Toolkit is installed and configured for Docker. On a connected, approved system, or using packages already staged for this offline host, an administrator can configure the runtime and restart Docker:
+
+```bash
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+Repeat the GPU-container check above. If the same `BPF_CGROUP_DEVICE` permission error remains, the VM or its parent hypervisor/container is not permitting the device-cgroup operation required by this runtime configuration. Ask the cloud/platform administrator to enable supported NVIDIA GPU passthrough and cgroup device access for the VM, or use a GPU VM configuration that supports Docker with NVIDIA Container Toolkit. Do not disable device-cgroup protections or change NVIDIA `no-cgroups` settings as a workaround for a mortgage-PII deployment.
+
+If the vLLM logs show `Application startup complete` but Docker reports the container unhealthy with `exec: "python": executable file not found`, the API is up and the health check is using the wrong executable name. The vLLM image provides `python3`; update to this Compose configuration and recreate the container so Docker adopts the corrected check:
+
+```bash
+docker compose up -d --force-recreate vllm
+docker compose ps
+docker inspect --format '{{range .State.Health.Log}}{{println "exit:" .ExitCode "output:" .Output}}{{end}}' "$(docker compose ps -q vllm)"
+```
+
+Wait for the health status to become `healthy` before starting the pipeline.
+
+### 3. Start the model and process a PDF
+
+Create local data directories, start vLLM, and wait until Docker reports it healthy:
+
+```bash
+cd /path/to/AI
+mkdir -p data/inbox data/outbox
+docker compose up -d vllm
+docker compose ps
+docker compose logs -f vllm
+```
+
+Press `Ctrl+C` to stop following logs; this does not stop the container. In another terminal, confirm vLLM is healthy with `docker compose ps`, copy one approved PDF into the inbox, and process it:
+
+```bash
+cp /path/to/approved/loan-package.pdf data/inbox/loan-package.pdf
+docker compose run --rm pipeline /data/inbox/Maxson_PostClose_Test_Dummy_Identifiers.pdf
+ls -lt data/outbox/*.verified.json
+```
+
+The result filename uses a prefix of the PDF's SHA-256 digest rather than its original filename. Review the JSON alongside the source PDF; filtered pages, missing evidence, and discrepancies require human review. Keep both directories on approved, encrypted local storage with restricted permissions.
+
+### 4. Stop the service
+
+```bash
+docker compose down
+```
+
+For additional documents, leave vLLM running and repeat the copy and `docker compose run` commands. The pipeline image is built on staging because installing its pinned Python dependencies and spaCy model requires package access. Runtime uses Hugging Face offline mode and does not download model files.
 
 ## Run locally on Windows
 
@@ -98,4 +178,4 @@ To process more PDFs, copy them into the inbox and repeat the `docker compose ru
 
 ## Operational notes
 
-The model needs substantial GPU memory; the 14B checkpoint may require quantized weights or additional GPUs depending on available VRAM. This deployment uses the supplied checkpoint as-is and does not enable a quantization mode. Verify GPU compatibility and memory in staging before transfer. Keep the offline model directory read-only and restrict access to the Docker daemon, input PDFs, and result files.
+The 14B checkpoint uses substantial GPU memory. The supplied Compose configuration limits its context to 16K tokens and reserves vLLM at up to 90% of available VRAM; reducing `--max-model-len` further may be necessary if startup exhausts memory. Quantized weights or additional GPUs may still be needed for longer contexts on smaller GPUs. Verify GPU compatibility and memory in staging before transfer. Keep the offline model directory read-only and restrict access to the Docker daemon, input PDFs, and result files.
