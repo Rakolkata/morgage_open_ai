@@ -108,6 +108,15 @@ docker compose run --rm pipeline /data/inbox/Maxson_PostClose_Test_Dummy_Identif
 ls -lt data/outbox/*.verified.json
 ```
 
+To apply a custom audit instruction, place a UTF-8 text file in the same approved inbox and pass its container path as the second argument. The JSON result will contain an `audit_table` with these columns: `Audit Area`, `Document Checked`, `Issue Found`, `Guideline Referenced`, and `Exact Quote/Data Point`.
+
+```bash
+cp /path/to/approved/audit-instructions.txt data/inbox/audit-instructions.txt
+docker compose run --rm pipeline \
+  /data/inbox/Maxson_PostClose_Test_Dummy_Identifiers.pdf \
+  /data/inbox/audit-instructions.txt
+```
+
 The result filename uses a prefix of the PDF's SHA-256 digest rather than its original filename. Review the JSON alongside the source PDF; filtered pages, missing evidence, and discrepancies require human review. Keep both directories on approved, encrypted local storage with restricted permissions.
 
 ### 4. Stop the service
