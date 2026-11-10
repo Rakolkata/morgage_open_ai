@@ -2,7 +2,7 @@
 
 This project runs a local vLLM endpoint for `deepseek-ai/DeepSeek-R1-Distill-Qwen-14B` (a Qwen-based 14B model) and a one-document-at-a-time mortgage extraction CLI. The vLLM and pipeline containers share only a Docker network marked `internal`; no service port is published. The pipeline reads PDFs from a read-only inbox and writes a JSON result to the local outbox.
 
-The pipeline follows the supplied flowchart: page classification and filtering of blank, detected cover, and disclosure pages; native PDF text extraction with local Tesseract OCR for scanned pages; local Presidio PII tokenization; local vLLM extraction; and Python income/DTI/LTV recomputation. Model-provided source quotes are resolved locally to page numbers and PDF-point bounding boxes for side-by-side review; quote text is not stored. PII hits also include page and bounding-box locations. Filtered pages are listed in the result for manual completeness review because heuristic classification can omit relevant information.
+The pipeline extracts native PDF text locally and uses local Tesseract OCR for scanned pages, then sends the resulting **unredacted text** to the local vLLM model for extraction or auditing. The configured Qwen model is text-only; the PDF itself is not attached to the model request. This means names, account numbers, and other PII in extracted text are visible to the model. OCR rendering excludes PDF annotations so unsupported watermark appearances do not prevent scanned-page processing; annotation-only text is not included in OCR. Model-provided source quotes are resolved locally to page numbers and PDF-point bounding boxes for side-by-side review. The JSON report records that PII sanitization was not applied; protect it and the model service as sensitive.
 
 ## Offline deployment
 
@@ -118,10 +118,14 @@ docker compose run --rm pipeline \
 ```
 
 To run every prompt in the supplied CSV against one loan PDF, put both files in the
-inbox and pass the CSV as the second argument. The pipeline reads and sanitizes the
-PDF once, then audits it with each prompt. The outbox receives one JSON report
-containing a separate result for each prompt key. An in-progress report is updated
-after each prompt; if the run is interrupted, it remains available for review.
+inbox and pass the CSV as the second argument. The pipeline extracts the PDF text
+once and sends it unredacted to the local model for each prompt. The outbox receives one JSON report
+per prompt key, plus a combined summary report. Each per-prompt file is written as soon
+as that prompt finishes; an in-progress summary is updated after each prompt and remains
+available if the run is interrupted. Filenames include the PDF hash, prompt index, and
+a filesystem-safe version of the prompt key. A
+terminal progress bar shows completed prompts and the prompt currently being processed.
+When output is redirected, progress is written as separate lines to standard error.
 Failed prompts are recorded in the report, and the command exits with a non-zero
 status.
 
@@ -129,7 +133,7 @@ status.
 docker compose run --rm pipeline \
   /data/inbox/loan-package.pdf \
   "/data/inbox/Post Closing Prompts.csv"
-ls -lt data/outbox/*.post-closing-audits.json
+ls -lt data/outbox/*.prompt-*.json data/outbox/*.post-closing-audits.json
 ```
 
 The CSV must have `Prompt Key (DO NOT EDIT)` and `Prompt Text` columns. UTF-8 and
@@ -139,7 +143,7 @@ from PowerShell after starting Docker Desktop and the vLLM service:
 ```powershell
 docker compose up -d vllm
 docker compose run --rm pipeline /data/inbox/loan-package.pdf "/data/inbox/Post Closing Prompts.csv"
-Get-ChildItem C:\AI\data\outbox\*.post-closing-audits.json
+Get-ChildItem C:\AI\data\outbox\*.prompt-*.json
 ```
 
 The result filename uses a prefix of the PDF's SHA-256 digest rather than its original filename. Review the JSON alongside the source PDF; filtered pages, missing evidence, and discrepancies require human review. Keep both directories on approved, encrypted local storage with restricted permissions.
@@ -150,7 +154,7 @@ The result filename uses a prefix of the PDF's SHA-256 digest rather than its or
 docker compose down
 ```
 
-For additional documents, leave vLLM running and repeat the copy and `docker compose run` commands. The pipeline image is built on staging because installing its pinned Python dependencies and spaCy model requires package access. Runtime uses Hugging Face offline mode and does not download model files.
+For additional documents, leave vLLM running and repeat the copy and `docker compose run` commands. The pipeline image is built on staging because installing its pinned Python dependencies requires package access. Runtime uses Hugging Face offline mode and does not download model files.
 
 ## Run locally on Windows
 
@@ -175,7 +179,7 @@ py -3.12 -m venv "$env:USERPROFILE\.venvs\hf-cli"
 # Download the model into the directory expected by compose.yaml.
 & "$env:USERPROFILE\.venvs\hf-cli\Scripts\hf.exe" download deepseek-ai/DeepSeek-R1-Distill-Qwen-14B --local-dir models\DeepSeek-R1-Distill-Qwen-14B
 
-# Pull vLLM and build the local PDF/OCR/PII processing image.
+# Pull vLLM and build the local PDF/OCR processing image.
 docker compose pull vllm
 docker compose build pipeline
 
@@ -206,8 +210,8 @@ To process more PDFs, copy them into the inbox and repeat the `docker compose ru
 
 - There are no published host ports. The pipeline can call vLLM over the Docker `internal` network, which has no default route to external networks. Compose is not a substitute for physical isolation or host firewall policy; enforce those controls too, and treat access to the Docker daemon as privileged.
 - Input PDFs are mounted read-only. Do not bind the inbox or outbox to network shares if the air-gap requirement prohibits those paths.
-- PII is tokenized in memory before inference. Raw documents, sanitized prompt text, and model reasoning are not written to the output. The JSON report contains the source hash, extracted loan values, tokenized-PII locations, and validation status; treat it as sensitive and protect the outbox accordingly.
-- Tesseract and Presidio run locally. PII detection is not guaranteed to catch every identifier; review source PDFs alongside the result.
+- Extracted text, including PII, is sent unredacted to the local vLLM model. The PDF itself is not sent; PDF text extraction and OCR happen inside the pipeline container. Model-generated audit quotes or extraction evidence may include sensitive information, so protect the model service and output directory accordingly.
+- Tesseract runs locally. OCR and model extraction can miss or misread information; review source PDFs alongside the result.
 - `PASS_MATH_ONLY` means only that the source income sum and reported DTI/LTV could be recomputed consistently and source evidence was mapped. Missing values, conflicts, unresolved evidence, and mismatches require underwriter review. This is not an underwriting recommendation or approval.
 
 ## Operational notes
