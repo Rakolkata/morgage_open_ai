@@ -2,7 +2,7 @@
 
 This project runs a local vLLM endpoint for `deepseek-ai/DeepSeek-R1-Distill-Qwen-14B` (a Qwen-based 14B model) and a one-document-at-a-time mortgage extraction CLI. The vLLM and pipeline containers share only a Docker network marked `internal`; no service port is published. The pipeline reads PDFs from a read-only inbox and writes a JSON result to the local outbox.
 
-The pipeline extracts native PDF text locally and uses local Tesseract OCR for scanned pages, then sends the resulting **unredacted text** to the local vLLM model for extraction or auditing. The configured Qwen model is text-only; the PDF itself is not attached to the model request. This means names, account numbers, and other PII in extracted text are visible to the model. OCR rendering excludes PDF annotations so unsupported watermark appearances do not prevent scanned-page processing; annotation-only text is not included in OCR. Model-provided source quotes are resolved locally to page numbers and PDF-point bounding boxes for side-by-side review. The JSON report records that PII sanitization was not applied; protect it and the model service as sensitive.
+The pipeline extracts native PDF text locally and uses local Tesseract OCR for scanned pages, then sends the resulting **unredacted text** to the local vLLM model for extraction or auditing. The configured Qwen model is text-only; the PDF itself is not attached to the model request. This means names, account numbers, and other PII in extracted text are visible to the model. PDF annotations are excluded from text extraction and OCR to avoid unsupported watermark appearance errors; annotation-only text is not processed. Model-provided source quotes are resolved locally to page numbers and PDF-point bounding boxes for side-by-side review. The JSON report records that PII sanitization was not applied; protect it and the model service as sensitive.
 
 ## Offline deployment
 
@@ -123,9 +123,10 @@ once and sends it unredacted to the local model for each prompt. The outbox rece
 per prompt key, plus a combined summary report. Each per-prompt file is written as soon
 as that prompt finishes; an in-progress summary is updated after each prompt and remains
 available if the run is interrupted. Filenames include the PDF hash, prompt index, and
-a filesystem-safe version of the prompt key. A
-terminal progress bar shows completed prompts and the prompt currently being processed.
-When output is redirected, progress is written as separate lines to standard error.
+a filesystem-safe version of the prompt key. A terminal progress bar shows completed
+prompts and the prompt currently being processed, with a five-second heartbeat while
+extraction or model inference is still running. When output is redirected, progress is
+written as separate lines to standard error.
 Failed prompts are recorded in the report, and the command exits with a non-zero
 status.
 

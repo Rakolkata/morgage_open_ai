@@ -10,10 +10,12 @@ import math
 import os
 import re
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import fitz
 import pytesseract
@@ -192,6 +194,9 @@ def _classify_page(text: str) -> str:
 def extract_pages(pdf_path: Path) -> list[Page]:
     pages: list[Page] = []
     with fitz.open(pdf_path) as document:
+        for index in range(document.page_count):
+            page_xref = document.page_xref(index)
+            document.xref_set_key(page_xref, "Annots", "[]")
         for index, page in enumerate(document):
             words = _words_from_native(page)
             ocr_used = not any(len(word.text.strip()) > 1 for word in words)
@@ -610,6 +615,32 @@ def _report_audit_progress(
     print(line, end="\r" if interactive else "\n", file=sys.stderr, flush=True)
 
 
+def _run_with_progress(
+    operation: Callable[[], Any],
+    completed: int,
+    total: int,
+    status: str,
+    interactive: bool,
+) -> Any:
+    stop_event = threading.Event()
+    started_at = time.monotonic()
+
+    def report_while_running() -> None:
+        while not stop_event.wait(5):
+            elapsed = int(time.monotonic() - started_at)
+            _report_audit_progress(
+                completed, total, f"{status} ({elapsed}s)", interactive
+            )
+
+    reporter = threading.Thread(target=report_while_running, daemon=True)
+    reporter.start()
+    try:
+        return operation()
+    finally:
+        stop_event.set()
+        reporter.join()
+
+
 def process_audit_batch(
     pdf_path: Path, prompts: list[tuple[str, str]], outbox: Path
 ) -> Path:
@@ -618,7 +649,15 @@ def process_audit_batch(
     if not prompts:
         raise ValueError("At least one audit prompt is required.")
 
-    pages = extract_pages(pdf_path)
+    interactive_progress = sys.stderr.isatty()
+    _report_audit_progress(0, len(prompts), "extracting PDF pages", interactive_progress)
+    pages = _run_with_progress(
+        lambda: extract_pages(pdf_path),
+        0,
+        len(prompts),
+        "extracting PDF pages",
+        interactive_progress,
+    )
     nonblank_pages = [page for page in pages if page.page_type != "blank"]
     if not nonblank_pages:
         raise ValueError("The PDF contains no readable text.")
@@ -679,18 +718,27 @@ def process_audit_batch(
     output_path = outbox / f"{digest[:16]}.post-closing-audits.json"
     _write_json_atomic(progress_path, result)
 
-    interactive_progress = sys.stderr.isatty()
-    _report_audit_progress(0, len(prompts), "starting", interactive_progress)
     for index, (key, instructions) in enumerate(prompts, start=1):
         _report_audit_progress(
             index - 1, len(prompts), f"running prompt {index}", interactive_progress
         )
         try:
-            audit_rows = [
-                row
-                for chunk in chunks
-                for row in _call_audit_model(client, model, instructions, chunk)["audit_rows"]
-            ]
+            def run_prompt() -> list[dict[str, str]]:
+                return [
+                    row
+                    for chunk in chunks
+                    for row in _call_audit_model(
+                        client, model, instructions, chunk
+                    )["audit_rows"]
+                ]
+
+            audit_rows = _run_with_progress(
+                run_prompt,
+                index - 1,
+                len(prompts),
+                f"running prompt {index}",
+                interactive_progress,
+            )
             prompt_result = {
                 "prompt_index": index,
                 "prompt_key": key,
