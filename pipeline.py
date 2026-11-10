@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 import math
 import os
@@ -15,7 +17,7 @@ from typing import Any
 
 import fitz
 import pytesseract
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 from PIL import Image
 from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 from presidio_analyzer.nlp_engine import NlpEngineProvider
@@ -678,15 +680,169 @@ def process(pdf_path: Path, audit_instructions: str | None = None) -> dict[str, 
     }
 
 
+def load_audit_prompts(csv_path: Path) -> list[tuple[str, str]]:
+    required_columns = {"Prompt Key (DO NOT EDIT)", "Prompt Text"}
+    content = csv_path.read_bytes()
+    try:
+        decoded = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        decoded = content.decode("cp1252")
+    reader = csv.DictReader(io.StringIO(decoded, newline=""))
+    if reader.fieldnames is None or not required_columns.issubset(reader.fieldnames):
+        raise ValueError(
+            "Prompt CSV must contain 'Prompt Key (DO NOT EDIT)' and 'Prompt Text' columns."
+        )
+    prompts = []
+    for row_number, row in enumerate(reader, start=2):
+        key = (row.get("Prompt Key (DO NOT EDIT)") or "").strip()
+        text = (row.get("Prompt Text") or "").strip()
+        if not key or not text:
+            raise ValueError(f"Prompt CSV row {row_number} has a missing key or prompt text.")
+        prompts.append((key, text))
+    if not prompts:
+        raise ValueError("Prompt CSV contains no prompts.")
+    return prompts
+
+
+def _write_json_atomic(path: Path, result: dict[str, Any]) -> None:
+    temporary_path = path.with_suffix(path.suffix + ".tmp")
+    temporary_path.write_text(
+        json.dumps(result, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
+    )
+    temporary_path.replace(path)
+
+
+def process_audit_batch(
+    pdf_path: Path, prompts: list[tuple[str, str]], outbox: Path
+) -> Path:
+    if not pdf_path.is_file() or pdf_path.suffix.lower() != ".pdf":
+        raise ValueError("Provide the path to an existing PDF inside /data/inbox.")
+    if not prompts:
+        raise ValueError("At least one audit prompt is required.")
+
+    pages = extract_pages(pdf_path)
+    nonblank_pages = [page for page in pages if page.page_type != "blank"]
+    if not nonblank_pages:
+        raise ValueError("The PDF contains no readable text.")
+
+    analyzer = build_analyzer()
+    sanitized_pages, _, tokenized_count = sanitize_pages(nonblank_pages, analyzer)
+    chunks = _document_chunks(
+        [
+            f"PAGE {page.number}:\n{text}"
+            for page, text in zip(nonblank_pages, sanitized_pages)
+        ]
+    )
+    if not chunks:
+        raise ValueError("The PDF contains no readable text for auditing.")
+
+    model = os.environ.get("VLLM_MODEL", "mortgage-qwen")
+    client = OpenAI(
+        base_url=os.environ.get("VLLM_BASE_URL", "http://vllm:8000/v1"),
+        api_key="offline",
+        timeout=float(os.environ.get("VLLM_TIMEOUT_SECONDS", "600")),
+        max_retries=0,
+    )
+    digest = _sha256(pdf_path)
+    page_counts: dict[str, int] = {}
+    for page in pages:
+        page_counts[page.page_type] = page_counts.get(page.page_type, 0) + 1
+    result: dict[str, Any] = {
+        "source_sha256": digest,
+        "processed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "model": model,
+        "status": "in_progress",
+        "prompt_count": len(prompts),
+        "completed_prompt_count": 0,
+        "audit_columns": [
+            "Audit Area",
+            "Document Checked",
+            "Issue Found",
+            "Guideline Referenced",
+            "Exact Quote/Data Point",
+        ],
+        "prompt_results": [],
+        "pipeline": {
+            "page_count": len(pages),
+            "page_classification_counts": page_counts,
+            "filtered_pages": [
+                {"page": page.number, "reason": page.page_type}
+                for page in pages
+                if page.page_type in {"blank", "cover", "disclosure"}
+            ],
+            "pii_entities_tokenized": tokenized_count,
+            "reasoning_trace_stored": False,
+        },
+        "underwriter_review_required": True,
+    }
+
+    outbox.mkdir(parents=True, exist_ok=True)
+    progress_path = outbox / f"{digest[:16]}.post-closing-audits.in-progress.json"
+    output_path = outbox / f"{digest[:16]}.post-closing-audits.json"
+    _write_json_atomic(progress_path, result)
+
+    for index, (key, instructions) in enumerate(prompts, start=1):
+        try:
+            audit_rows = [
+                row
+                for chunk in chunks
+                for row in _call_audit_model(client, model, instructions, chunk)["audit_rows"]
+            ]
+            prompt_result = {
+                "prompt_index": index,
+                "prompt_key": key,
+                "status": "completed",
+                "audit_table": audit_rows,
+            }
+        except (OpenAIError, ValueError) as error:
+            prompt_result = {
+                "prompt_index": index,
+                "prompt_key": key,
+                "status": "failed",
+                "error": f"{type(error).__name__}: {error}",
+            }
+        result["prompt_results"].append(prompt_result)
+        result["completed_prompt_count"] = index
+        _write_json_atomic(progress_path, result)
+
+    failed_count = sum(
+        prompt_result["status"] == "failed" for prompt_result in result["prompt_results"]
+    )
+    result["status"] = "completed_with_errors" if failed_count else "completed"
+    result["failed_prompt_count"] = failed_count
+    _write_json_atomic(progress_path, result)
+    progress_path.replace(output_path)
+    return output_path
+
+
 def main() -> int:
     if len(sys.argv) not in {2, 3}:
-        print("Usage: docker compose run --rm pipeline /data/inbox/<document>.pdf [/data/inbox/<audit-instructions>.txt]", file=sys.stderr)
+        print(
+            "Usage: docker compose run --rm pipeline /data/inbox/<document>.pdf "
+            "[/data/inbox/<audit-instructions>.txt|/data/inbox/<prompts>.csv]",
+            file=sys.stderr,
+        )
         return 2
     try:
         source = Path(sys.argv[1]).resolve()
         inbox = Path("/data/inbox").resolve(strict=True)
         if inbox not in source.parents or not source.is_file():
             raise ValueError("Input must be an existing PDF file inside /data/inbox.")
+        outbox = Path("/data/outbox")
+        if len(sys.argv) == 3 and Path(sys.argv[2]).suffix.lower() == ".csv":
+            prompts_path = Path(sys.argv[2]).resolve()
+            if inbox not in prompts_path.parents or not prompts_path.is_file():
+                raise ValueError("Prompt CSV must be an existing file inside /data/inbox.")
+            output_path = process_audit_batch(
+                source, load_audit_prompts(prompts_path), outbox
+            )
+            result = json.loads(output_path.read_text(encoding="utf-8"))
+            print(
+                f"Saved {result['completed_prompt_count']} prompt results "
+                f"({result['failed_prompt_count']} failed) to {output_path}"
+            )
+            return 1 if result["failed_prompt_count"] else 0
+
         audit_instructions = None
         if len(sys.argv) == 3:
             instructions_path = Path(sys.argv[2]).resolve()
@@ -694,13 +850,12 @@ def main() -> int:
                 raise ValueError("Instructions must be an existing text file inside /data/inbox.")
             audit_instructions = instructions_path.read_text(encoding="utf-8")
         result = process(source, audit_instructions)
-        outbox = Path("/data/outbox")
         outbox.mkdir(parents=True, exist_ok=True)
         output_path = outbox / f"{result['source_sha256'][:16]}.verified.json"
         output_path.write_text(json.dumps(result, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
         print(f"Saved sanitized extraction and verification to {output_path}")
         return 0
-    except (ValueError, OSError) as error:
+    except (ValueError, OSError, csv.Error) as error:
         print(f"Processing failed: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
 

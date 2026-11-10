@@ -117,6 +117,31 @@ docker compose run --rm pipeline \
   /data/inbox/audit-instructions.txt
 ```
 
+To run every prompt in the supplied CSV against one loan PDF, put both files in the
+inbox and pass the CSV as the second argument. The pipeline reads and sanitizes the
+PDF once, then audits it with each prompt. The outbox receives one JSON report
+containing a separate result for each prompt key. An in-progress report is updated
+after each prompt; if the run is interrupted, it remains available for review.
+Failed prompts are recorded in the report, and the command exits with a non-zero
+status.
+
+```bash
+docker compose run --rm pipeline \
+  /data/inbox/loan-package.pdf \
+  "/data/inbox/Post Closing Prompts.csv"
+ls -lt data/outbox/*.post-closing-audits.json
+```
+
+The CSV must have `Prompt Key (DO NOT EDIT)` and `Prompt Text` columns. UTF-8 and
+Windows-1252 CSV files are supported. On Windows, run the same container command
+from PowerShell after starting Docker Desktop and the vLLM service:
+
+```powershell
+docker compose up -d vllm
+docker compose run --rm pipeline /data/inbox/loan-package.pdf "/data/inbox/Post Closing Prompts.csv"
+Get-ChildItem C:\AI\data\outbox\*.post-closing-audits.json
+```
+
 The result filename uses a prefix of the PDF's SHA-256 digest rather than its original filename. Review the JSON alongside the source PDF; filtered pages, missing evidence, and discrepancies require human review. Keep both directories on approved, encrypted local storage with restricted permissions.
 
 ### 4. Stop the service
