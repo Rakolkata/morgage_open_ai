@@ -24,3 +24,5 @@ __pycache__/
 !.env.example
 hf_*
 *.log
+backup/
+START_HERE.txt
