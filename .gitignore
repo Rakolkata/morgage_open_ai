@@ -26,3 +26,9 @@ hf_*
 *.log
 backup/
 START_HERE.txt
+# Next.js frontend
+frontend-next/node_modules/
+frontend-next/.next/
+frontend-next/out/
+frontend-next/.env.local
+frontend-next/.env*.local
