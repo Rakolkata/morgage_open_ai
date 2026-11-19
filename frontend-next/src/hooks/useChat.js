@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useChatContext } from "../context/ChatContext";
@@ -14,27 +13,51 @@ export default function useChat() {
   } = useChatContext();
 
   const sendMessage = async (message) => {
-    if (!message.trim() || loading) return;
+    if (!message?.trim() || loading) return;
+
+    // Support both possible document ID field names
+    const documentId =
+      currentDocument?.document_id || currentDocument?.id;
+
+    if (!documentId) {
+      setMessages((previous) => [
+        ...previous,
+        {
+          role: "assistant",
+          content: "Please upload a PDF document before chatting.",
+        },
+      ]);
+      return;
+    }
 
     const userMessage = {
       role: "user",
-      content: message,
+      content: message.trim(),
     };
+
+    // Keep the previous messages as conversation history
+    const history = messages
+      .slice(-12)
+      .map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+      }));
 
     setMessages((previous) => [...previous, userMessage]);
     setLoading(true);
 
     try {
       const response = await sendChatMessage(
-        message,
-        currentDocument?.id
+        message.trim(),
+        documentId,
+        history
       );
 
       const aiMessage = {
         role: "assistant",
         content:
-          response.response ||
           response.answer ||
+          response.response ||
           response.message ||
           "No response received from the AI.",
       };
@@ -43,13 +66,19 @@ export default function useChat() {
     } catch (error) {
       console.error("Chat API error:", error);
 
+      const errorMessage =
+        error.response?.data?.detail ||
+        error.response?.data?.error?.message ||
+        error.message ||
+        "Unable to connect to the backend. Please check the API server.";
+
       setMessages((previous) => [
         ...previous,
         {
           role: "assistant",
-          content:
-            error.response?.data?.detail ||
-            "Unable to connect to the backend. Please check the API server.",
+          content: typeof errorMessage === "string"
+            ? errorMessage
+            : JSON.stringify(errorMessage),
         },
       ]);
     } finally {
