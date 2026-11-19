@@ -6,10 +6,9 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agents import (
-    AuditResult,
-    BaseAgent,
-    ExtractionPlan,
-    ExtractionResult,
+    AuditorAgent,
+    DataExtractorAgent,
+    OrchestratorAgent,
 )
 from app.errors import AppError, http_error
 from app.llm import LLMService, OllamaService
@@ -27,8 +26,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Ollama Chat & Agent API",
-    version="1.1.0",
-    description="Backend API providing /api/v1/chat with BaseAgent and local Ollama support."
+    version="1.2.0",
+    description="Backend API providing /api/v1/chat with multi-agent orchestration and local Ollama support."
 )
 
 # ==================================================
@@ -60,40 +59,48 @@ async def app_error_handler(request: Request, exc: AppError):
 @app.post(
     "/api/v1/chat",
     response_model=ChatResponse,
-    summary="Chat with local Ollama or test BaseAgent",
+    summary="Chat with local Ollama or run specific Agent",
     description=(
         "Hit this endpoint with form-data (key: msg). "
-        "Optionally pass key: agent ('plan', 'extract', 'audit') to test BaseAgent."
+        "Pass key: agent ('orchestrator', 'data_extractor', 'auditor') from Postman to execute specific agents."
     )
 )
 async def chat(
     request: Request,
-    msg: Optional[str] = Form(None, description="Message to prompt the local Ollama model or agent"),
-    agent: Optional[str] = Form(None, description="Optional agent mode: 'plan', 'extract', 'audit', or 'chat'")
+    msg: Optional[str] = Form(None, description="Input message or document text"),
+    agent: Optional[str] = Form(None, description="Agent to execute: 'orchestrator', 'data_extractor', 'auditor', or 'chat'")
 ):
     user_msg = msg
     agent_mode = agent
+    extra_form: dict = {}
 
-    # Fallback to check form-data or JSON body if not directly matched by FastAPI Form parameters
+    # Extract form-data if not mapped by parameter
+    try:
+        form_data = await request.form()
+        extra_form = dict(form_data)
+        if not user_msg:
+            user_msg = form_data.get("msg") or form_data.get("message")
+        if not agent_mode:
+            agent_mode = form_data.get("agent")
+    except Exception:
+        pass
+
+    # Extract JSON body fallback
     if not user_msg or not agent_mode:
-        try:
-            form_data = await request.form()
-            if not user_msg:
-                user_msg = form_data.get("msg") or form_data.get("message")
-            if not agent_mode:
-                agent_mode = form_data.get("agent")
-        except Exception:
-            pass
-
-    if not user_msg:
         try:
             json_data = await request.json()
             if isinstance(json_data, dict):
-                user_msg = json_data.get("msg") or json_data.get("message")
+                if not user_msg:
+                    user_msg = json_data.get("msg") or json_data.get("message")
                 if not agent_mode:
                     agent_mode = json_data.get("agent")
+                extra_form.update(json_data)
         except Exception:
             pass
+
+    # Extract query params fallback (?agent=...)
+    if not agent_mode and request.query_params.get("agent"):
+        agent_mode = request.query_params.get("agent")
 
     if not user_msg or not str(user_msg).strip():
         raise HTTPException(
@@ -102,73 +109,39 @@ async def chat(
         )
 
     prompt = str(user_msg).strip()
-    agent_name = str(agent_mode).strip().lower() if agent_mode else ""
-    logger.info("Received request (agent=%s): %s", agent_name or "chat", prompt[:80])
+    clean_agent = (
+        str(agent_mode).strip().lower().replace("-", "_").replace(" ", "_")
+        if agent_mode
+        else ""
+    )
+
+    logger.info("Executing chat endpoint (agent='%s'): %s", clean_agent or "chat", prompt[:80])
 
     try:
+        ollama = OllamaService()
+
         # --------------------------------------------------
-        # Agent Mode: Test BaseAgent with Schemas
+        # 1. Orchestrator Agent
         # --------------------------------------------------
-        if agent_name in {"plan", "orchestrator"}:
-            ollama = OllamaService()
-            agent_instance = BaseAgent(
-                llm=ollama,
-                name="OrchestratorAgent",
-                system_prompt=(
-                    "You are a mortgage loan document extraction planner. "
-                    "Analyze the task and generate a structured ExtractionPlan adhering to the schema."
-                ),
-                output_schema=ExtractionPlan
-            )
-            result = await agent_instance.run({"task": prompt})
-            output_dict = result.model_dump()
-            ans_text = json.dumps(output_dict, indent=2)
+        if clean_agent in {"orchestrator", "orchestrator_agent", "plan", "planner"}:
+            agent_instance = OrchestratorAgent(llm=ollama)
 
-            return ChatResponse(
-                ans=ans_text,
-                answer=ans_text,
-                model=ollama.model,
-                agent_name=agent_instance.name,
-                agent_output=output_dict,
-                status="success"
-            )
+            # Check if custom schemas list is provided
+            schemas_raw = extra_form.get("schemas") or extra_form.get("available_schemas")
+            if isinstance(schemas_raw, str):
+                try:
+                    schemas_list = json.loads(schemas_raw)
+                except Exception:
+                    schemas_list = [s.strip() for s in schemas_raw.split(",") if s.strip()]
+            elif isinstance(schemas_raw, list):
+                schemas_list = schemas_raw
+            else:
+                schemas_list = ["LE", "CD", "1003", "OTHER"]
 
-        if agent_name in {"extract", "extractor"}:
-            ollama = OllamaService()
-            agent_instance = BaseAgent(
-                llm=ollama,
-                name="ExtractorAgent",
-                system_prompt=(
-                    "You are a mortgage document extraction assistant. "
-                    "Extract fields, document info, and missing items according to the schema."
-                ),
-                output_schema=ExtractionResult
+            result = await agent_instance.prepare_extraction(
+                guideline=prompt,
+                schemas=schemas_list
             )
-            result = await agent_instance.run({"document_content": prompt})
-            output_dict = result.model_dump()
-            ans_text = json.dumps(output_dict, indent=2)
-
-            return ChatResponse(
-                ans=ans_text,
-                answer=ans_text,
-                model=ollama.model,
-                agent_name=agent_instance.name,
-                agent_output=output_dict,
-                status="success"
-            )
-
-        if agent_name in {"audit", "auditor"}:
-            ollama = OllamaService()
-            agent_instance = BaseAgent(
-                llm=ollama,
-                name="AuditorAgent",
-                system_prompt=(
-                    "You are a mortgage document post-closing audit assistant. "
-                    "Perform checks and generate findings according to the schema."
-                ),
-                output_schema=AuditResult
-            )
-            result = await agent_instance.run({"document_content": prompt})
             output_dict = result.model_dump()
             ans_text = json.dumps(output_dict, indent=2)
 
@@ -182,7 +155,55 @@ async def chat(
             )
 
         # --------------------------------------------------
-        # Default Chat Mode: Direct Ollama Query
+        # 2. Data Extractor Agent
+        # --------------------------------------------------
+        if clean_agent in {"data_extractor", "data_extractor_agent", "extractor", "extract"}:
+            agent_instance = DataExtractorAgent(llm=ollama)
+
+            plan_input = extra_form.get("plan") or extra_form.get("extraction_plan")
+            result = await agent_instance.extract(
+                extraction_plan=plan_input,
+                page_content=prompt
+            )
+            output_dict = result.model_dump()
+            ans_text = json.dumps(output_dict, indent=2)
+
+            return ChatResponse(
+                ans=ans_text,
+                answer=ans_text,
+                model=ollama.model,
+                agent_name=agent_instance.name,
+                agent_output=output_dict,
+                status="success"
+            )
+
+        # --------------------------------------------------
+        # 3. Auditor Agent
+        # --------------------------------------------------
+        if clean_agent in {"auditor", "auditor_agent", "audit"}:
+            agent_instance = AuditorAgent(llm=ollama)
+
+            extracted_data_input = extra_form.get("extracted_data") or extra_form.get("data") or prompt
+            doc_content_input = extra_form.get("document_content") or extra_form.get("document") or prompt
+
+            result = await agent_instance.audit(
+                extracted_data=extracted_data_input,
+                document_content=doc_content_input
+            )
+            output_dict = result.model_dump()
+            ans_text = json.dumps(output_dict, indent=2)
+
+            return ChatResponse(
+                ans=ans_text,
+                answer=ans_text,
+                model=ollama.model,
+                agent_name=agent_instance.name,
+                agent_output=output_dict,
+                status="success"
+            )
+
+        # --------------------------------------------------
+        # 4. Default Chat Mode (no agent or agent=chat)
         # --------------------------------------------------
         llm = LLMService()
         ans = llm.generate(prompt)
@@ -191,13 +212,15 @@ async def chat(
             ans=ans,
             answer=ans,
             model=llm.model_name,
+            agent_name="Default Chat",
+            agent_output=None,
             status="success"
         )
 
     except AppError:
         raise
     except ConnectionError as exc:
-        logger.error("Connection error: %s", exc)
+        logger.error("Connection error with Ollama: %s", exc)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to process request: %s", exc)
