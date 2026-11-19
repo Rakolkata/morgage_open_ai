@@ -9,3 +9,5 @@ pymupdf
 pytesseract
 openpyxl
 ollama
+psycopg2-binary
+

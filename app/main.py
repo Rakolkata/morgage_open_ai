@@ -1,5 +1,6 @@
 import json
 import logging
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -10,6 +11,7 @@ from app.agents import (
     DataExtractorAgent,
     OrchestratorAgent,
 )
+from app.database import init_db, save_chat_log
 from app.errors import AppError, http_error
 from app.llm import LLMService, OllamaService
 from app.schemas import ChatResponse
@@ -20,14 +22,37 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# ==================================================
+# SERVER LIFESPAN (DATABASE & TABLE INITIALIZATION)
+# ==================================================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    On server startup:
+    Checks if PostgreSQL database exists; creates it if not.
+    Checks if table exists; creates it if not.
+    Skips creation if both already exist.
+    """
+    logger.info("Server starting up: running PostgreSQL database check...")
+    try:
+        init_db()
+    except Exception as exc:
+        logger.warning("Database check encountered an error: %s", exc)
+    yield
+    logger.info("Server shutting down.")
+
+
 # ==================================================
 # FASTAPI APPLICATION
 # ==================================================
 
 app = FastAPI(
     title="Ollama Chat & Agent API",
-    version="1.2.0",
-    description="Backend API providing /api/v1/chat with multi-agent orchestration and local Ollama support."
+    version="1.3.0",
+    description="Backend API providing /api/v1/chat with multi-agent orchestration, Ollama, and PostgreSQL logging.",
+    lifespan=lifespan
 )
 
 # ==================================================
@@ -62,7 +87,8 @@ async def app_error_handler(request: Request, exc: AppError):
     summary="Chat with local Ollama or run specific Agent",
     description=(
         "Hit this endpoint with form-data (key: msg). "
-        "Pass key: agent ('orchestrator', 'data_extractor', 'auditor') from Postman to execute specific agents."
+        "Pass key: agent ('orchestrator', 'data_extractor', 'auditor') from Postman to execute specific agents. "
+        "Requests are automatically stored in PostgreSQL with timestamp."
     )
 )
 async def chat(
@@ -145,6 +171,13 @@ async def chat(
             output_dict = result.model_dump()
             ans_text = json.dumps(output_dict, indent=2)
 
+            # Store in PostgreSQL database
+            save_chat_log(
+                message=prompt,
+                agent=agent_instance.name,
+                response=ans_text
+            )
+
             return ChatResponse(
                 ans=ans_text,
                 answer=ans_text,
@@ -167,6 +200,13 @@ async def chat(
             )
             output_dict = result.model_dump()
             ans_text = json.dumps(output_dict, indent=2)
+
+            # Store in PostgreSQL database
+            save_chat_log(
+                message=prompt,
+                agent=agent_instance.name,
+                response=ans_text
+            )
 
             return ChatResponse(
                 ans=ans_text,
@@ -193,6 +233,13 @@ async def chat(
             output_dict = result.model_dump()
             ans_text = json.dumps(output_dict, indent=2)
 
+            # Store in PostgreSQL database
+            save_chat_log(
+                message=prompt,
+                agent=agent_instance.name,
+                response=ans_text
+            )
+
             return ChatResponse(
                 ans=ans_text,
                 answer=ans_text,
@@ -207,6 +254,13 @@ async def chat(
         # --------------------------------------------------
         llm = LLMService()
         ans = llm.generate(prompt)
+
+        # Store in PostgreSQL database
+        save_chat_log(
+            message=prompt,
+            agent="Default Chat",
+            response=ans
+        )
 
         return ChatResponse(
             ans=ans,

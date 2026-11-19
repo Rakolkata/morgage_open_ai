@@ -73,6 +73,14 @@ class Settings:
     prompt_id_column: str = "Prompt Key (DO NOT EDIT)"
     prompt_text_column: str = "Prompt Text"
 
+    # PostgreSQL configuration
+    db_name: str = "mortgage_ai_db"
+    db_user: str = "postgres"
+    db_password: str = "postgres"
+    db_host: str = "localhost"
+    db_port: int = 5432
+    db_table: str = "chat_logs"
+
     def llm_status(self) -> dict:
         """Validate LLM configuration status."""
         if self.llm_mode == "ollama":
@@ -149,4 +157,10 @@ def get_settings() -> Settings:
         context_char_budget=_int("CONTEXT_CHAR_BUDGET", 12000, 2000),
         document_ttl_minutes=_int("DOCUMENT_TTL_MINUTES", 60, 1),
         pii_redaction=_bool("PII_REDACTION", True),
+        db_name=os.getenv("DB_NAME", "mortgage_ai_db").strip(),
+        db_user=os.getenv("DB_USER", "postgres").strip(),
+        db_password=os.getenv("DB_PASSWORD", "postgres").strip(),
+        db_host=os.getenv("DB_HOST", "localhost").strip(),
+        db_port=_int("DB_PORT", 5432, 1),
+        db_table=os.getenv("DB_TABLE", "chat_logs").strip(),
     )
