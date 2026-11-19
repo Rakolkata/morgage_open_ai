@@ -13,45 +13,71 @@ export default function MessageInput() {
   const handleSubmit = async (event) => {
     event.preventDefault();
 
-    if (!message.trim() || loading) return;
+    const text = message.trim();
 
-    const currentMessage = message;
+    if (!text || loading) return;
+
     setMessage("");
-
-    await sendMessage(currentMessage);
+    await sendMessage(text);
   };
 
   return (
     <div className="message-input-container">
-      <DocumentUpload />
 
-      <form className="message-input-form" onSubmit={handleSubmit}>
-        <input
-          type="text"
-          value={message}
-          onChange={(event) => setMessage(event.target.value)}
-          placeholder="Ask anything about your mortgage document..."
-          disabled={loading}
-        />
+      {/* DOCUMENT UPLOAD */}
+      <div className="message-upload-section">
+        <DocumentUpload />
+      </div>
 
-        <button
-          type="submit"
-          disabled={!message.trim() || loading}
-          aria-label="Send message"
-        >
-          {loading ? (
-            <LoaderCircle size={19} className="upload-spinner" />
-          ) : (
-            <Send size={19} />
-          )}
-        </button>
+      {/* CHAT INPUT */}
+      <form
+        className="message-input-form"
+        onSubmit={handleSubmit}
+      >
+        <div className="message-input-field">
+
+          <input
+            type="text"
+            value={message}
+            onChange={(event) => setMessage(event.target.value)}
+            placeholder="Ask a question about this loan file..."
+            disabled={loading}
+            aria-label="Ask about mortgage document"
+          />
+
+          <button
+            type="submit"
+            className="message-send-button"
+            disabled={!message.trim() || loading}
+            aria-label="Send message"
+          >
+            {loading ? (
+              <LoaderCircle
+                size={18}
+                className="upload-spinner"
+              />
+            ) : (
+              <Send size={18} />
+            )}
+          </button>
+
+        </div>
       </form>
 
-      <p className="input-disclaimer">
-        <Paperclip size={12} />
-        Upload PDF documents for mortgage audit analysis.
-        Verify AI-generated findings against original evidence.
-      </p>
+      {/* FOOTER */}
+      <div className="message-input-footer">
+
+        <span>
+          <Paperclip size={13} />
+          PDF document analysis
+        </span>
+
+        <span>
+          Verify extracted information against source documents.
+        </span>
+
+      </div>
+
     </div>
   );
 }

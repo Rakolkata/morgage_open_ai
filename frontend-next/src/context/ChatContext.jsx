@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -15,6 +14,25 @@ import {
 
 const ChatContext = createContext(null);
 
+// Normalize document IDs so the chat always uses document_id.
+function normalizeDocument(document) {
+  if (!document) return null;
+
+  const documentId =
+    document.document_id ||
+    document.id ||
+    document.data?.document_id ||
+    document.data?.id;
+
+  if (!documentId) return document;
+
+  return {
+    ...document,
+    id: documentId,
+    document_id: documentId,
+  };
+}
+
 export function ChatProvider({ children }) {
   const [messages, setMessages] = useState([]);
   const [currentDocument, setCurrentDocument] = useState(null);
@@ -24,35 +42,44 @@ export function ChatProvider({ children }) {
   const [activeConversationId, setActiveConversationId] = useState(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
 
-  // Load saved conversations when the application starts
+  // Load saved conversations on startup.
   useEffect(() => {
-    const savedConversations = getConversations();
+    try {
+      const savedConversations = getConversations() || [];
 
-    setConversations(savedConversations);
+      const normalizedConversations = savedConversations.map(
+        (conversation) => ({
+          ...conversation,
+          document: normalizeDocument(conversation.document),
+          messages: conversation.messages || [],
+        })
+      );
 
-    // Reopen the most recently updated conversation
-    if (savedConversations.length > 0) {
-      const latest = [...savedConversations].sort(
-        (a, b) =>
-          new Date(b.updatedAt || b.createdAt) -
-          new Date(a.updatedAt || a.createdAt)
-      )[0];
+      setConversations(normalizedConversations);
 
-      setActiveConversationId(latest.id);
-      setMessages(latest.messages || []);
-      setCurrentDocument(latest.document || null);
+      if (normalizedConversations.length > 0) {
+        const latest = [...normalizedConversations].sort(
+          (a, b) =>
+            new Date(b.updatedAt || b.createdAt || 0) -
+            new Date(a.updatedAt || a.createdAt || 0)
+        )[0];
+
+        setActiveConversationId(latest.id);
+        setMessages(latest.messages || []);
+        setCurrentDocument(
+          normalizeDocument(latest.document)
+        );
+      }
+    } catch (error) {
+      console.error("Failed to load chat history:", error);
+    } finally {
+      setHistoryLoaded(true);
     }
-
-    setHistoryLoaded(true);
   }, []);
 
-  // Automatically save messages whenever the conversation changes
+  // Save the active conversation when messages or document change.
   useEffect(() => {
     if (!historyLoaded || messages.length === 0) return;
-
-    const existingConversation = conversations.find(
-      (item) => item.id === activeConversationId
-    );
 
     const id =
       activeConversationId ||
@@ -60,23 +87,32 @@ export function ChatProvider({ children }) {
         ? crypto.randomUUID()
         : `chat-${Date.now()}`);
 
+    const existingConversation = conversations.find(
+      (conversation) => conversation.id === id
+    );
+
     const firstUserMessage = messages.find(
       (message) => message.role === "user"
     );
+
+    const normalizedDocument = normalizeDocument(currentDocument);
 
     const conversation = {
       id,
       title: firstUserMessage
         ? firstUserMessage.content.slice(0, 55)
-        : "New chat",
+        : existingConversation?.title || "New chat",
       messages,
-      document: currentDocument,
+      document: normalizedDocument,
       createdAt:
-        existingConversation?.createdAt || new Date().toISOString(),
+        existingConversation?.createdAt ||
+        new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
-    setActiveConversationId(id);
+    if (!activeConversationId) {
+      setActiveConversationId(id);
+    }
 
     setConversations((previous) => {
       const updated = [
@@ -84,9 +120,14 @@ export function ChatProvider({ children }) {
         ...previous.filter((item) => item.id !== id),
       ];
 
-      saveConversation(conversation);
       return updated;
     });
+
+    try {
+      saveConversation(conversation);
+    } catch (error) {
+      console.error("Failed to save conversation:", error);
+    }
   }, [
     messages,
     currentDocument,
@@ -94,11 +135,12 @@ export function ChatProvider({ children }) {
     historyLoaded,
   ]);
 
+  // Add a message to the current conversation.
   const addMessage = (message) => {
     setMessages((previous) => [...previous, message]);
   };
 
-  // Start a new chat without deleting previous conversations
+  // Start a fresh conversation.
   const clearChat = () => {
     setMessages([]);
     setCurrentDocument(null);
@@ -106,7 +148,7 @@ export function ChatProvider({ children }) {
     setLoading(false);
   };
 
-  // Open an existing conversation
+  // Open an existing conversation.
   const openConversation = (id) => {
     const conversation = conversations.find(
       (item) => item.id === id
@@ -114,9 +156,19 @@ export function ChatProvider({ children }) {
 
     if (!conversation) return;
 
+    setLoading(false);
     setActiveConversationId(conversation.id);
     setMessages(conversation.messages || []);
-    setCurrentDocument(conversation.document || null);
+    setCurrentDocument(
+      normalizeDocument(conversation.document)
+    );
+  };
+
+  // Safely store the uploaded document.
+  const updateCurrentDocument = (document) => {
+    const normalized = normalizeDocument(document);
+
+    setCurrentDocument(normalized);
   };
 
   return (
@@ -125,11 +177,15 @@ export function ChatProvider({ children }) {
         messages,
         setMessages,
         addMessage,
+
         currentDocument,
-        setCurrentDocument,
+        setCurrentDocument: updateCurrentDocument,
+
         loading,
         setLoading,
+
         clearChat,
+
         conversations,
         activeConversationId,
         openConversation,
@@ -144,7 +200,9 @@ export function useChatContext() {
   const context = useContext(ChatContext);
 
   if (!context) {
-    throw new Error("useChatContext must be used inside ChatProvider");
+    throw new Error(
+      "useChatContext must be used inside ChatProvider"
+    );
   }
 
   return context;
