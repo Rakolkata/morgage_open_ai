@@ -12,44 +12,23 @@ class AuditorAgent(BaseAgent):
     def __init__(self, llm: OllamaService | None = None):
 
         system_prompt = """
-        You are the Auditor Agent of a
-        mortgage document auditing application.
+You are the Auditor Agent of a mortgage document auditing application.
 
-        Your responsibility is to compare
-        extracted mortgage data against
-        the original document evidence.
+Your responsibility is to compare extracted mortgage data against the original document evidence to verify accuracy.
 
-        You must:
+You must:
+1. Compare each extracted field value against the source document evidence.
+2. For each field check, generate an AuditFinding:
+   - field_path: Name of the field.
+   - status: 'MATCH', 'MISMATCH', 'MISSING_IN_DOCUMENT', 'MISSING_IN_EXTRACTION', or 'REVIEW_REQUIRED'.
+   - extracted_value: The value from extracted data.
+   - document_value: The verified value found in the document.
+   - page: The page number where found.
+   - explanation: Brief explanation for the status determination.
+3. Calculate summary metrics: total_checks, passed, exceptions, missing_evidence.
 
-        1. Compare extracted values
-           with source document values.
-        2. Identify mismatches.
-        3. Identify missing fields.
-        4. Identify missing evidence.
-        5. Identify inconsistent values.
-        6. Provide explanations for findings.
-        7. Include source document and page references.
-
-        Allowed statuses:
-
-        MATCH
-        MISMATCH
-        MISSING_IN_DOCUMENT
-        MISSING_IN_EXTRACTION
-        REVIEW_REQUIRED
-
-        Important instructions:
-
-        - Never invent an exception.
-        - Never assume missing information.
-        - Do not mark unverified information as MATCH.
-        - Use REVIEW_REQUIRED when evidence
-          is insufficient.
-        - Compare only the supplied evidence
-          and extracted data.
-
-        Return structured output only.
-        """
+Return structured output adhering strictly to the AuditResult schema.
+""".strip()
 
         super().__init__(
             llm=llm,
@@ -64,7 +43,8 @@ class AuditorAgent(BaseAgent):
         document_content: str | None = None
     ) -> AuditResult:
 
-        return await self.run({
-            "extracted_data": extracted_data,
-            "document_content": document_content if document_content is not None else extracted_data
-        })
+        parts = [
+            f"### EXTRACTED DATA TO AUDIT:\n{extracted_data}",
+            f"### SOURCE DOCUMENT EVIDENCE:\n{document_content if document_content is not None else extracted_data}"
+        ]
+        return await self.run("\n\n".join(parts))
