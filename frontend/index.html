@@ -1,0 +1,320 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mortgage AI | Document Assistant</title>
+
+    <link rel="stylesheet" href="./styles.css">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+</head>
+
+<body>
+
+<div class="app-shell">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+
+        <!-- BRAND -->
+        <div class="brand">
+            <div class="brand-mark">
+                <span> M </span>
+            </div>
+
+            <div class="brand-info">
+                <strong>Mortgage AI</strong>
+                <small>Post-Closing Audit Assistant</small>
+            </div>
+        </div>
+
+        <!-- NEW DOCUMENT BUTTON -->
+        <button class="new-document-btn" id="newChat" type="button">
+            <span>＋</span>
+            New document
+        </button>
+
+        <!-- WORKSPACE -->
+        <div class="sidebar-section">
+
+            <span class="side-label">WORKSPACE</span>
+
+            <div class="sidebar-item">
+                <span>▤</span>
+                <span>Document Assistant</span>
+            </div>
+
+        </div>
+
+        <!-- CHAT HISTORY -->
+        <div class="sidebar-section history-section">
+
+            <span class="side-label">CHAT HISTORY</span>
+
+            <div id="historyList" class="history-list">
+
+                <p class="history-empty">
+                    No conversations yet
+                </p>
+
+            </div>
+
+        </div>
+
+        <!-- CURRENT DOCUMENT -->
+        <div class="sidebar-section">
+
+            <span class="side-label">CURRENT DOCUMENT</span>
+
+            <div class="document-card-box">
+
+                <div class="document-icon">
+                    PDF
+                </div>
+
+                <div class="document-details">
+
+                    <strong id="documentName">
+                        No PDF uploaded
+                    </strong>
+
+                    <small id="documentPages">
+                        Upload a document to begin
+                    </small>
+
+                </div>
+
+            </div>
+
+            <p class="side-note">
+                Upload your mortgage documents to begin the post-closing audit process.
+            </p>
+
+        </div>
+
+        <!-- SIDEBAR BOTTOM -->
+        <div class="sidebar-bottom">
+
+            <div class="security-note">
+
+                <span>🔒</span>
+
+                <div>
+                    <strong>Secure Document Processing</strong>
+
+                    <small>
+                        Documents are processed by your configured backend.
+                    </small>
+                </div>
+
+            </div>
+
+        </div>
+
+    </aside>
+
+
+    <!-- MAIN CONTENT -->
+    <main class="main">
+
+        <!-- TOPBAR -->
+        <header class="topbar">
+
+            <div>
+                <span class="eyebrow">MORTGAGE INTELLIGENCE</span>
+
+                <h1>Document Assistant</h1>
+
+                <p>
+                    Analyze mortgage documents and identify post-closing issues.
+                </p>
+            </div>
+
+            <div class="status" id="llmStatus">
+
+                <span class="status-dot"></span>
+
+                <span>Checking AI status...</span>
+
+            </div>
+
+        </header>
+
+
+        <!-- WELCOME SCREEN -->
+        <section class="welcome" id="welcome">
+
+            <div class="hero-badge">
+                <span>✦</span>
+            </div>
+
+            <span class="welcome-label">
+                AI-POWERED MORTGAGE AUDIT
+            </span>
+
+            <h2>
+                Welcome to your
+                <span>Mortgage AI Assistant</span>
+            </h2>
+
+            <p class="welcome-description">
+                Upload your mortgage PDF documents and ask questions.
+                Analyze loan information, review document details,
+                and identify potential post-closing discrepancies.
+            </p>
+
+
+            <!-- PDF UPLOAD -->
+            <label class="upload-card" for="pdfInput">
+
+                <div class="upload-icon-wrapper">
+                    <span>↑</span>
+                </div>
+
+                <strong>
+                    Upload a mortgage PDF
+                </strong>
+
+                <small>
+                    Select a PDF document from your computer
+                </small>
+
+                <span class="file-format-badge">
+                    PDF FILE
+                </span>
+
+                <input
+                    type="file"
+                    id="pdfInput"
+                    accept=".pdf,application/pdf"
+                >
+
+            </label>
+
+
+            <!-- QUICK PROMPTS -->
+            <div class="quick-prompts">
+
+                <div class="prompt-heading">
+                    SUGGESTED QUESTIONS
+                </div>
+
+                <div class="prompt-list">
+
+                    <button class="suggestion" type="button">
+                        What is the total loan amount?
+                    </button>
+
+                    <button class="suggestion" type="button">
+                        What is the interest rate?
+                    </button>
+
+                    <button class="suggestion" type="button">
+                        Who is the borrower?
+                    </button>
+
+                    <button class="suggestion" type="button">
+                        Summarize this document
+                    </button>
+
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- CHAT AREA -->
+        <section class="chat-area hidden" id="chatArea">
+
+            <div class="chat-heading">
+
+                <div>
+
+                    <span class="chat-label">
+                        DOCUMENT CONVERSATION
+                    </span>
+
+                    <h2>Ask your mortgage questions</h2>
+
+                </div>
+
+                <div class="chat-indicator">
+
+                    <span class="indicator-dot"></span>
+
+                    <span>Assistant ready</span>
+
+                </div>
+
+            </div>
+
+
+            <!-- CHAT MESSAGES -->
+            <div class="messages" id="messages">
+
+            </div>
+
+        </section>
+
+
+        <!-- MESSAGE COMPOSER -->
+        <div class="composer-container">
+
+            <form class="composer" id="chatForm">
+
+                <textarea
+                    id="messageInput"
+                    rows="1"
+                    placeholder="Upload a PDF to start asking questions..."
+                    disabled
+                ></textarea>
+
+                <button
+                    type="submit"
+                    id="sendButton"
+                    disabled
+                >
+
+                    <span>Send</span>
+
+                    <span>➤</span>
+
+                </button>
+
+            </form>
+
+            <p class="composer-hint">
+                AI-generated responses should be verified against the original mortgage documents.
+            </p>
+
+        </div>
+
+
+        <!-- FOOTER -->
+        <footer>
+
+            Mortgage AI Assistant
+
+            <span>•</span>
+
+            Post-Closing Audit System
+
+        </footer>
+
+    </main>
+
+</div>
+
+
+<!-- JAVASCRIPT -->
+<script src="./db.js" defer></script>
+<script src="./app.js?v=20261116-3" defer></script>
+
+</body>
+</html>
