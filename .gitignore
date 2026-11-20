@@ -24,3 +24,15 @@ __pycache__/
 !.env.example
 hf_*
 *.log
+backup/
+START_HERE.txt
+
+# Next.js frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/.env*.local
+
+# Frontend backup - do not commit
+frontend_backup_before_merge/
