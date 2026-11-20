@@ -3,6 +3,7 @@
 import { useChatContext } from "../context/ChatContext";
 import type { ChatMessage } from "../context/ChatContext";
 import { sendChatMessage } from "../services/chatService";
+import { uploadDocument } from "../services/documentService";
 
 interface ChatApiError {
   response?: {
@@ -44,18 +45,21 @@ export default function useChat() {
     loading,
     setLoading,
     currentDocument,
+    setCurrentDocument,
+    selectedFile,
+    setSelectedFile,
   } = useChatContext();
 
   const sendMessage = async (message: string): Promise<void> => {
-    if (!message?.trim() || loading) return;
+    const text = message?.trim();
+    if (!text || loading) return;
 
-    const documentId =
-      currentDocument?.document_id || currentDocument?.id;
+    let docId = currentDocument?.document_id || currentDocument?.id;
 
-    if (!documentId) {
+    if (!docId && !selectedFile) {
       const assistantMessage: ChatMessage = {
         role: "assistant",
-        content: "Please upload a PDF document before chatting.",
+        content: "Please select a PDF document first before sending instructions.",
       };
 
       setMessages((previous) => [...previous, assistantMessage]);
@@ -64,23 +68,43 @@ export default function useChat() {
 
     const userMessage: ChatMessage = {
       role: "user",
-      content: message.trim(),
+      content: text,
     };
-
-    const history: ChatMessage[] = messages
-      .slice(-12)
-      .map((msg) => ({
-        role: msg.role === "user" ? "user" : "assistant",
-        content: msg.content,
-      }));
 
     setMessages((previous) => [...previous, userMessage]);
     setLoading(true);
 
     try {
+      // 1. If a new file is attached, upload to uploads/ folder and save instruction to database
+      if (selectedFile) {
+        const uploadResult = await uploadDocument(selectedFile, text);
+        docId = uploadResult.document_id || uploadResult.id;
+
+        setCurrentDocument({
+          id: String(docId),
+          document_id: String(docId),
+          name: uploadResult.filename,
+          filename: uploadResult.filename,
+          storage_path: uploadResult.storage_path,
+          instruction: text,
+          page_count: uploadResult.page_count ?? null,
+          status: "Uploaded",
+        });
+
+        setSelectedFile(null);
+      }
+
+      // 2. Send the chat message / instruction with the document ID
+      const history: ChatMessage[] = messages
+        .slice(-12)
+        .map((msg) => ({
+          role: msg.role === "user" ? "user" : "assistant",
+          content: msg.content,
+        }));
+
       const response = await sendChatMessage(
-        message.trim(),
-        String(documentId),
+        text,
+        String(docId),
         history
       );
 
