@@ -20,6 +20,7 @@ import {
 export interface ChatMessage {
   role: "user" | "assistant" | "system" | string;
   content: string;
+  agent?: string;
   [key: string]: unknown;
 }
 
@@ -53,6 +54,9 @@ interface ChatContextType {
 
   selectedFile: File | null;
   setSelectedFile: (file: File | null) => void;
+
+  selectedAgent: string;
+  setSelectedAgent: (agent: string) => void;
 
   loading: boolean;
   setLoading: React.Dispatch<React.SetStateAction<boolean>>;
@@ -111,6 +115,7 @@ export function ChatProvider({
   const [currentDocument, setCurrentDocument] =
     useState<DocumentData | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<string>("orchestrator");
 
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -330,6 +335,9 @@ export function ChatProvider({
 
     selectedFile,
     setSelectedFile,
+
+    selectedAgent,
+    setSelectedAgent,
 
     loading,
     setLoading,

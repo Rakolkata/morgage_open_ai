@@ -48,6 +48,7 @@ export default function useChat() {
     setCurrentDocument,
     selectedFile,
     setSelectedFile,
+    selectedAgent,
   } = useChatContext();
 
   const sendMessage = async (message: string): Promise<void> => {
@@ -105,11 +106,13 @@ export default function useChat() {
       const response = await sendChatMessage(
         text,
         String(docId),
-        history
+        history,
+        selectedAgent || "orchestrator"
       );
 
       const aiMessage: ChatMessage = {
         role: "assistant",
+        agent: typeof response.agent === "string" ? response.agent : selectedAgent,
         content:
           response.answer ||
           response.response ||

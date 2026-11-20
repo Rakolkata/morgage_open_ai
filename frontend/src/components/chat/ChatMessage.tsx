@@ -11,8 +11,9 @@ import {
 import { useState } from "react";
 
 interface MessageData {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | string;
   content: string;
+  agent?: string;
   evidence?: unknown;
 }
 
@@ -43,8 +44,14 @@ export default function ChatMessage({ message }: ChatMessageProps) {
 
       <div className="message-content">
         <div className="message-header">
-          <strong>{isUser ? "You" : "Mortgage AI"}</strong>
-          {!isUser && <span>AI Assistant</span>}
+          <strong>
+            {isUser
+              ? "You"
+              : message.agent
+              ? `${message.agent}`
+              : "Mortgage AI"}
+          </strong>
+          {!isUser && <span>{message.agent ? "Agent Response" : "AI Assistant"}</span>}
         </div>
 
         <div className="message-text">

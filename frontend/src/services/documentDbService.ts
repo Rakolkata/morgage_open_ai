@@ -11,13 +11,12 @@ export async function getDocuments() {
       filename: true,
       page_count: true,
       file_size: true,
-      sha256: true,
       extracted_data: true,
       created_at: true,
     },
   });
 
-  return documents.map((document) => ({
+  return documents.map((document: any) => ({
     ...document,
     file_size: document.file_size?.toString() ?? null,
   }));
