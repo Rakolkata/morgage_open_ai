@@ -10,6 +10,7 @@ import {
   Settings,
   ShieldCheck,
   PanelLeftClose,
+  ChevronDown,
 } from "lucide-react";
 
 import { useChatContext } from "../../context/ChatContext";
@@ -30,6 +31,8 @@ export default function WorkspaceSidebar({
     conversations = [],
     activeConversationId,
     openConversation,
+    selectedAgent,
+    setSelectedAgent,
   } = useChatContext();
 
   const typedConversations = conversations as Conversation[];
@@ -111,6 +114,24 @@ export default function WorkspaceSidebar({
             ))}
           </div>
         )}
+      </div>
+
+      <div className="sidebar-agent-section">
+        <p className="sidebar-label">ACTIVE AGENT</p>
+        <div className="sidebar-agent-select-wrapper">
+          <select
+            id="agent-select"
+            className="sidebar-agent-select"
+            value={selectedAgent}
+            onChange={(e) => setSelectedAgent(e.target.value)}
+            aria-label="Select active agent"
+          >
+            <option value="orchestrator">orchestrator</option>
+            <option value="data-extractor">data-extractor</option>
+            <option value="auditor">auditor</option>
+          </select>
+          <ChevronDown size={14} className="sidebar-agent-select-arrow" />
+        </div>
       </div>
 
       <div className="sidebar-security">

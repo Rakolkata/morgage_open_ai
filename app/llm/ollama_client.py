@@ -119,7 +119,8 @@ class OllamaService:
                     # Force structured JSON output matching schema
                     format=output_schema.model_json_schema(),
                     options={
-                        "temperature": 0
+                        "temperature": 0,
+                        "num_ctx": 8192
                     },
                     # Keep the model loaded in memory between requests
                     keep_alive="30m"

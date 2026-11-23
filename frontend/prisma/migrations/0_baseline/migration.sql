@@ -32,7 +32,6 @@ CREATE TABLE "documents" (
     "storage_path" TEXT NOT NULL,
     "page_count" INTEGER DEFAULT 0,
     "file_size" BIGINT,
-    "sha256" VARCHAR(64),
     "extracted_data" JSONB,
     "created_at" TIMESTAMPTZ(6) DEFAULT CURRENT_TIMESTAMP,
 

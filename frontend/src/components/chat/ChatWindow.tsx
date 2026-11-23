@@ -41,8 +41,10 @@ export default function ChatWindow() {
             <ChatMessage
               key={index}
               message={{
-                role: message.role === "user" ? "user" : "assistant",
+                role: message.role,
                 content: message.content,
+                agent: message.agent,
+                evidence: message.evidence,
               }}
             />
           ))}

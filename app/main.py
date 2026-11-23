@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import json
 import logging
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agents import (
@@ -12,6 +14,7 @@ from app.agents import (
     OrchestratorAgent,
 )
 from app.database import init_db, save_chat_log
+from app.document import extract_text_from_file_bytes
 from app.errors import AppError, http_error
 from app.llm import LLMService, OllamaService
 from app.schemas import ChatResponse
@@ -50,8 +53,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Ollama Chat & Agent API",
-    version="1.3.0",
-    description="Backend API providing /api/v1/chat with multi-agent orchestration, Ollama, and PostgreSQL logging.",
+    version="1.4.0",
+    description="Backend API providing /api/v1/chat with multi-agent orchestration, document processing, and local Ollama support.",
     lifespan=lifespan
 )
 
@@ -78,29 +81,31 @@ async def app_error_handler(request: Request, exc: AppError):
 
 
 # ==================================================
-# CHAT & AGENT ENDPOINT
+# CHAT & AGENT ENDPOINT WITH FILE UPLOAD
 # ==================================================
 
 @app.post(
     "/api/v1/chat",
     response_model=ChatResponse,
-    summary="Chat with local Ollama or run specific Agent",
+    summary="Chat with local Ollama or run specific Agent with optional document upload",
     description=(
-        "Hit this endpoint with form-data (key: msg). "
-        "Pass key: agent ('orchestrator', 'data_extractor', 'auditor') from Postman to execute specific agents. "
-        "Requests are automatically stored in PostgreSQL with timestamp."
+        "Hit this endpoint with form-data. "
+        "Pass 'msg' (guideline/text), 'agent' ('orchestrator', 'data_extractor', 'auditor'), "
+        "and optional 'file' (PDF, TXT, image) to prepare extraction instructions or extract data based on that document."
     )
 )
 async def chat(
     request: Request,
-    msg: Optional[str] = Form(None, description="Input message or document text"),
-    agent: Optional[str] = Form(None, description="Agent to execute: 'orchestrator', 'data_extractor', 'auditor', or 'chat'")
+    msg: Optional[str] = Form(None, description="Input message or guideline text"),
+    agent: Optional[str] = Form(None, description="Agent to execute: 'orchestrator', 'data_extractor', 'auditor', or 'chat'"),
+    file: Optional[UploadFile] = File(None, description="Optional document file (PDF, TXT, image, etc.)")
 ):
     user_msg = msg
     agent_mode = agent
+    uploaded_file = file
     extra_form: dict = {}
 
-    # Extract form-data if not mapped by parameter
+    # Extract form-data and check for uploaded file in request form
     try:
         form_data = await request.form()
         extra_form = dict(form_data)
@@ -108,10 +113,16 @@ async def chat(
             user_msg = form_data.get("msg") or form_data.get("message")
         if not agent_mode:
             agent_mode = form_data.get("agent")
+        if not uploaded_file:
+            for key in ("file", "document", "pdf", "doc"):
+                val = form_data.get(key)
+                if hasattr(val, "filename") and hasattr(val, "read"):
+                    uploaded_file = val
+                    break
     except Exception:
         pass
 
-    # Extract JSON body fallback
+    # Extract JSON body fallback (if non-multipart)
     if not user_msg or not agent_mode:
         try:
             json_data = await request.json()
@@ -128,11 +139,34 @@ async def chat(
     if not agent_mode and request.query_params.get("agent"):
         agent_mode = request.query_params.get("agent")
 
+    # Process uploaded file if present
+    extracted_doc_text = ""
+    file_name: Optional[str] = None
+
+    if uploaded_file and hasattr(uploaded_file, "filename") and uploaded_file.filename:
+        file_name = uploaded_file.filename
+        try:
+            raw_bytes = await uploaded_file.read()
+            extracted_doc_text = extract_text_from_file_bytes(raw_bytes, file_name)
+            logger.info(
+                "Extracted %d characters from uploaded file '%s'",
+                len(extracted_doc_text),
+                file_name
+            )
+        except AppError:
+            raise
+        except Exception as exc:
+            logger.warning("Failed to extract content from uploaded file '%s': %s", file_name, exc)
+
+    # If file was provided but msg was empty, provide a clean default guideline
     if not user_msg or not str(user_msg).strip():
-        raise HTTPException(
-            status_code=400,
-            detail="Field 'msg' is required on form-data."
-        )
+        if extracted_doc_text or file_name:
+            user_msg = f"Analyze the uploaded document '{file_name}' and prepare extraction instructions."
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Field 'msg' or an uploaded 'file' is required on form-data."
+            )
 
     prompt = str(user_msg).strip()
     clean_agent = (
@@ -141,13 +175,18 @@ async def chat(
         else ""
     )
 
-    logger.info("Executing chat endpoint (agent='%s'): %s", clean_agent or "chat", prompt[:80])
+    logger.info(
+        "Executing chat endpoint (agent='%s', file='%s'): %s",
+        clean_agent or "chat",
+        file_name or "None",
+        prompt[:80]
+    )
 
     try:
         ollama = OllamaService()
 
         # --------------------------------------------------
-        # 1. Orchestrator Agent
+        # 1. Orchestrator Agent (with Document Support)
         # --------------------------------------------------
         if clean_agent in {"orchestrator", "orchestrator_agent", "plan", "planner"}:
             agent_instance = OrchestratorAgent(llm=ollama)
@@ -164,67 +203,78 @@ async def chat(
             else:
                 schemas_list = ["LE", "CD", "1003", "OTHER"]
 
+            # Prepare extraction plan based on guideline and attached document content
             result = await agent_instance.prepare_extraction(
                 guideline=prompt,
-                schemas=schemas_list
+                schemas=schemas_list,
+                document_content=extracted_doc_text,
+                filename=file_name
             )
             output_dict = result.model_dump()
             ans_text = json.dumps(output_dict, indent=2)
 
             # Store in PostgreSQL database
             save_chat_log(
-                message=prompt,
+                message=f"[File: {file_name}] {prompt}" if file_name else prompt,
                 agent=agent_instance.name,
                 response=ans_text
             )
 
             return ChatResponse(
-                ans=ans_text,
                 answer=ans_text,
                 model=ollama.model,
                 agent_name=agent_instance.name,
                 agent_output=output_dict,
+                file_name=file_name,
                 status="success"
             )
 
         # --------------------------------------------------
-        # 2. Data Extractor Agent
+        # 2. Data Extractor Agent (with Document Support)
         # --------------------------------------------------
         if clean_agent in {"data_extractor", "data_extractor_agent", "extractor", "extract"}:
             agent_instance = DataExtractorAgent(llm=ollama)
 
+            # If file is attached, use its content; otherwise use prompt as document content
+            content_to_extract = extracted_doc_text if extracted_doc_text else prompt
             plan_input = extra_form.get("plan") or extra_form.get("extraction_plan")
+            if not plan_input and extracted_doc_text:
+                plan_input = prompt
+
             result = await agent_instance.extract(
                 extraction_plan=plan_input,
-                page_content=prompt
+                page_content=content_to_extract
             )
             output_dict = result.model_dump()
             ans_text = json.dumps(output_dict, indent=2)
 
-            # Store in PostgreSQL database
             save_chat_log(
-                message=prompt,
+                message=f"[File: {file_name}] {prompt}" if file_name else prompt,
                 agent=agent_instance.name,
                 response=ans_text
             )
 
             return ChatResponse(
-                ans=ans_text,
                 answer=ans_text,
                 model=ollama.model,
                 agent_name=agent_instance.name,
                 agent_output=output_dict,
+                file_name=file_name,
                 status="success"
             )
 
         # --------------------------------------------------
-        # 3. Auditor Agent
+        # 3. Auditor Agent (with Document Support)
         # --------------------------------------------------
         if clean_agent in {"auditor", "auditor_agent", "audit"}:
             agent_instance = AuditorAgent(llm=ollama)
 
             extracted_data_input = extra_form.get("extracted_data") or extra_form.get("data") or prompt
-            doc_content_input = extra_form.get("document_content") or extra_form.get("document") or prompt
+            doc_content_input = (
+                extracted_doc_text
+                if extracted_doc_text
+                else (extra_form.get("document_content") or extra_form.get("document") or prompt)
+            )
 
             result = await agent_instance.audit(
                 extracted_data=extracted_data_input,
@@ -233,41 +283,47 @@ async def chat(
             output_dict = result.model_dump()
             ans_text = json.dumps(output_dict, indent=2)
 
-            # Store in PostgreSQL database
             save_chat_log(
-                message=prompt,
+                message=f"[File: {file_name}] {prompt}" if file_name else prompt,
                 agent=agent_instance.name,
                 response=ans_text
             )
 
             return ChatResponse(
-                ans=ans_text,
                 answer=ans_text,
                 model=ollama.model,
                 agent_name=agent_instance.name,
                 agent_output=output_dict,
+                file_name=file_name,
                 status="success"
             )
 
         # --------------------------------------------------
         # 4. Default Chat Mode (no agent or agent=chat)
         # --------------------------------------------------
-        llm = LLMService()
-        ans = llm.generate(prompt)
+        full_chat_prompt = prompt
+        if extracted_doc_text:
+            full_chat_prompt = (
+                f"Document Content ({file_name}):\n"
+                f"{extracted_doc_text}\n\n"
+                f"Question / Instruction:\n{prompt}"
+            )
 
-        # Store in PostgreSQL database
+        llm = LLMService()
+        ans = llm.generate(full_chat_prompt)
+
         save_chat_log(
-            message=prompt,
+            message=f"[File: {file_name}] {prompt}" if file_name else prompt,
             agent="Default Chat",
             response=ans
         )
 
         return ChatResponse(
-            ans=ans,
             answer=ans,
             model=llm.model_name,
             agent_name="Default Chat",
             agent_output=None,
+            file_name=file_name,
             status="success"
         )
 

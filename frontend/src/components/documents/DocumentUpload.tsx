@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useRef, useState } from "react";
@@ -17,96 +16,38 @@ import {
 } from "lucide-react";
 
 import { useChatContext } from "../../context/ChatContext";
-import { uploadDocument } from "../../services/documentService";
 
 interface UploadedDocument {
   id: string;
   document_id: string;
   name: string;
   filename: string;
-  size: number;
-  pageCount: number | null;
-  page_count: number | null;
-  status: string;
-   [key: string]: unknown;
-}
-
-interface UploadError {
-  response?: {
-    data?: {
-      detail?: unknown;
-      error?: {
-        message?: string;
-      };
-    };
-  };
-  message?: string;
-}
-
-interface UploadResponse {
-  data?: {
-    data?: Record<string, unknown>;
-    document_id?: string;
-    filename?: string;
-    page_count?: number;
-  } & Record<string, unknown>;
-  document_id?: string;
-  id?: string;
-  filename?: string;
-  page_count?: number;
-}
-
-function getErrorMessage(error: unknown): string {
-  const err = error as UploadError;
-
-  const detail =
-    err.response?.data?.detail ||
-    err.response?.data?.error?.message;
-
-  let errorMessage =
-    err.message ||
-    "Upload failed. Please check the backend connection.";
-
-  if (typeof detail === "string") {
-    errorMessage = detail;
-  } else if (Array.isArray(detail)) {
-    errorMessage = detail
-      .map((item: unknown) => {
-        if (typeof item === "string") return item;
-
-        if (item && typeof item === "object" && "msg" in item) {
-          return String(item.msg);
-        }
-
-        return JSON.stringify(item);
-      })
-      .join(", ");
-  } else if (detail && typeof detail === "object") {
-    const detailObject = detail as Record<string, unknown>;
-
-    errorMessage =
-      String(detailObject.message || detailObject.error || JSON.stringify(detail));
-  }
-
-  return errorMessage;
+  storage_path?: string;
+  instruction?: string;
+  size?: number;
+  pageCount?: number | null;
+  page_count?: number | null;
+  status?: string;
+  [key: string]: unknown;
 }
 
 export default function DocumentUpload() {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const [error, setError] = useState<string>("");
-  const [uploading, setUploading] = useState<boolean>(false);
   const [dragging, setDragging] = useState<boolean>(false);
 
   const {
     currentDocument,
     setCurrentDocument,
-    setLoading,
+    selectedFile,
+    setSelectedFile,
+    loading,
   } = useChatContext();
 
   const documentInfo = currentDocument as UploadedDocument | null;
 
-  const processFile = async (file?: File) => {
+  const handleSelectFile = (file?: File) => {
     if (!file) return;
 
     setError("");
@@ -119,112 +60,42 @@ export default function DocumentUpload() {
       return;
     }
 
-    if (file.size > 25 * 1024 * 1024) {
-      setError("File size exceeds the 25 MB limit.");
+    if (file.size > 50 * 1024 * 1024) {
+      setError("File size exceeds the 50 MB limit.");
       return;
     }
 
-    setUploading(true);
-    setLoading(true);
-
-    try {
-      const result = (await uploadDocument(file)) as UploadResponse;
-
-      // Support different backend response structures.
-      const documentData =
-        result?.data?.data ||
-        result?.data ||
-        result;
-
-      const documentId =
-        documentData?.document_id ||
-        documentData?.id ||
-        result?.document_id ||
-        result?.data?.document_id;
-
-      const filename =
-        documentData?.filename ||
-        result?.filename ||
-        file.name;
-
-      const pageCount =
-        documentData?.page_count ??
-        result?.page_count ??
-        null;
-
-      // Do not save a document without a valid ID.
-      if (!documentId) {
-        console.error("Upload response:", result);
-
-        throw new Error(
-          "Upload completed, but the backend did not return a document ID."
-        );
-      }
-
-      const validDocumentId = String(documentId);
-      const validFilename = String(filename);
-
-      const uploadedDocument: UploadedDocument = {
-        id: validDocumentId,
-        document_id: validDocumentId,
-        name: validFilename,
-        filename: validFilename,
-        size: file.size,
-        pageCount:
-          typeof pageCount === "number" ? pageCount : null,
-        page_count:
-          typeof pageCount === "number" ? pageCount : null,
-        status: "Uploaded",
-      };
-
-      console.log("Uploaded document stored:", uploadedDocument);
-
-      setCurrentDocument(uploadedDocument);
-      setError("");
-    } catch (err: unknown) {
-      console.error("Document upload failed:", err);
-      setError(getErrorMessage(err));
-    } finally {
-      setUploading(false);
-      setLoading(false);
-    }
+    setSelectedFile(file);
+    setError("");
   };
 
-  const handleUpload = async (
-    event: ChangeEvent<HTMLInputElement>
-  ) => {
+  const handleFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-
-    await processFile(file);
-
+    handleSelectFile(file);
     event.target.value = "";
   };
 
-  const handleDrop = async (
-    event: DragEvent<HTMLDivElement>
-  ) => {
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setDragging(false);
 
-    if (uploading || currentDocument) return;
+    if (loading || currentDocument) return;
 
     const file = event.dataTransfer.files?.[0];
-
-    await processFile(file);
+    handleSelectFile(file);
   };
 
   const removeDocument = () => {
     setCurrentDocument(null);
+    setSelectedFile(null);
     setError("");
   };
 
-  const handleDropzoneClick = (
-    event: MouseEvent<HTMLDivElement>
-  ) => {
+  const handleDropzoneClick = (event: MouseEvent<HTMLDivElement>) => {
     if (
-      uploading ||
+      loading ||
       (event.target instanceof HTMLElement &&
-        event.target.closest("input"))
+        event.target.closest("input, button"))
     ) {
       return;
     }
@@ -232,12 +103,10 @@ export default function DocumentUpload() {
     inputRef.current?.click();
   };
 
-  const handleDropzoneKeyDown = (
-    event: KeyboardEvent<HTMLDivElement>
-  ) => {
+  const handleDropzoneKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (
       (event.key === "Enter" || event.key === " ") &&
-      !uploading
+      !loading
     ) {
       event.preventDefault();
       inputRef.current?.click();
@@ -246,15 +115,16 @@ export default function DocumentUpload() {
 
   return (
     <div className="document-upload">
-      {!documentInfo ? (
+      {/* 1. DROPZONE (when no file is selected and no document is uploaded) */}
+      {!documentInfo && !selectedFile && (
         <div
           className={`upload-dropzone ${
             dragging ? "dragging" : ""
-          } ${uploading ? "uploading" : ""}`}
+          } ${loading ? "uploading" : ""}`}
           onClick={handleDropzoneClick}
           onDragOver={(event) => {
             event.preventDefault();
-            if (!uploading) setDragging(true);
+            if (!loading) setDragging(true);
           }}
           onDragLeave={() => setDragging(false)}
           onDrop={handleDrop}
@@ -267,72 +137,92 @@ export default function DocumentUpload() {
             type="file"
             accept="application/pdf,.pdf"
             hidden
-            onChange={handleUpload}
-            disabled={uploading}
+            onChange={handleFileInputChange}
+            disabled={loading}
           />
 
           <div className="upload-visual">
-            {uploading ? (
-              <LoaderCircle
-                size={24}
-                className="upload-spinner"
-              />
-            ) : (
-              <Upload size={24} />
-            )}
+            <Upload size={24} />
           </div>
 
           <div className="upload-text">
-            <h3>
-              {uploading
-                ? "Uploading document"
-                : "Upload mortgage document"}
-            </h3>
-
-            <p>
-              {uploading
-                ? "Please wait while your document is processed."
-                : "Drag and drop your PDF here, or browse files"}
-            </p>
+            <h3>Upload mortgage document</h3>
+            <p>Drag and drop your PDF here, or click to browse</p>
           </div>
 
-          {!uploading && (
-            <span className="upload-file-limit">
-              PDF only · Maximum 25 MB
-            </span>
-          )}
+          <span className="upload-file-limit">
+            PDF only · Up to 50 MB
+          </span>
         </div>
-      ) : (
+      )}
+
+      {/* 2. SELECTED FILE READY (styled matching the design without extra buttons or textareas) */}
+      {!documentInfo && selectedFile && (
         <div className="uploaded-document">
-          <div className="uploaded-document-icon">
-            <FileText size={21} />
-          </div>
+          <FileText size={22} className="text-blue-600" />
 
           <div className="uploaded-document-info">
-            <strong title={documentInfo.name}>
-              {documentInfo.name}
+            <strong title={selectedFile.name}>
+              {selectedFile.name}
             </strong>
-
             <span>
-              {documentInfo.pageCount
-                ? `${documentInfo.pageCount} pages`
-                : "PDF document"}
+              {(selectedFile.size / 1024 / 1024).toFixed(2)} MB · PDF attached
             </span>
-
-            <span className="uploaded-status">
-              <CheckCircle2 size={13} />
-              Successfully uploaded
+            <span className="text-[11px] text-blue-600 font-medium">
+              Enter your instruction below and send to upload &amp; analyze ↓
             </span>
           </div>
 
           <button
             type="button"
-            className="remove-document-button"
+            onClick={() => setSelectedFile(null)}
+            disabled={loading}
+            aria-label="Remove selected file"
+            title="Remove file"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {/* 3. UPLOADED DOCUMENT DISPLAY */}
+      {documentInfo && (
+        <div className="uploaded-document">
+          <FileText size={22} />
+
+          <div className="uploaded-document-info">
+            <strong title={documentInfo.name || documentInfo.filename}>
+              {documentInfo.name || documentInfo.filename}
+            </strong>
+
+            <span>
+              {documentInfo.page_count || documentInfo.pageCount
+                ? `${documentInfo.page_count || documentInfo.pageCount} pages`
+                : "PDF document"}
+            </span>
+
+            {documentInfo.storage_path && (
+              <span
+                className="text-[11px] text-slate-500 truncate max-w-sm block font-mono bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200 mt-0.5"
+                title={documentInfo.storage_path}
+              >
+                📁 {documentInfo.storage_path}
+              </span>
+            )}
+
+            <span className="uploaded-status">
+              <CheckCircle2 size={13} />
+              Saved to uploads &amp; database
+            </span>
+          </div>
+
+          <button
+            type="button"
             onClick={removeDocument}
-            aria-label="Remove uploaded document"
+            aria-label="Remove document"
             title="Remove document"
           >
-            <X size={17} />
+            <X size={16} />
           </button>
         </div>
       )}

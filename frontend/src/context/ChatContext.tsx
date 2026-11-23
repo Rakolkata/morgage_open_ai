@@ -20,6 +20,7 @@ import {
 export interface ChatMessage {
   role: "user" | "assistant" | "system" | string;
   content: string;
+  agent?: string;
   [key: string]: unknown;
 }
 
@@ -50,6 +51,12 @@ interface ChatContextType {
 
   currentDocument: DocumentData | null;
   setCurrentDocument: (document: DocumentData | null) => void;
+
+  selectedFile: File | null;
+  setSelectedFile: (file: File | null) => void;
+
+  selectedAgent: string;
+  setSelectedAgent: (agent: string) => void;
 
   loading: boolean;
   setLoading: React.Dispatch<React.SetStateAction<boolean>>;
@@ -107,6 +114,8 @@ export function ChatProvider({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentDocument, setCurrentDocument] =
     useState<DocumentData | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<string>("orchestrator");
 
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -264,6 +273,7 @@ export function ChatProvider({
   const clearChat = (): void => {
     setMessages([]);
     setCurrentDocument(null);
+    setSelectedFile(null);
     setActiveConversationId(null);
     setLoading(false);
   };
@@ -322,6 +332,12 @@ export function ChatProvider({
 
     currentDocument,
     setCurrentDocument: updateCurrentDocument,
+
+    selectedFile,
+    setSelectedFile,
+
+    selectedAgent,
+    setSelectedAgent,
 
     loading,
     setLoading,

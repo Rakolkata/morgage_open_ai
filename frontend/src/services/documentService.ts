@@ -2,30 +2,54 @@ export interface UploadDocumentResponse {
   document_id: string;
   id: string;
   filename: string;
+  storage_path?: string;
+  instruction?: string;
   page_count?: number;
+  file_size?: number;
   message?: string;
+  document?: {
+    id: string;
+    filename: string;
+    storage_path: string;
+    instruction?: string;
+    page_count?: number;
+    file_size?: number;
+    created_at?: string;
+  };
   [key: string]: unknown;
 }
 
-interface MulterUploadResponse {
+interface ServerUploadResponse {
   success: boolean;
   message: string;
-  document: {
+  document_id?: string;
+  id?: string;
+  filename?: string;
+  storage_path?: string;
+  instruction?: string;
+  page_count?: number;
+  file_size?: number;
+  document?: {
     id: string;
-    original_filename: string;
-    stored_filename: string;
+    filename: string;
     storage_path: string;
-    mime_type: string;
-    file_size: number;
-    uploaded_at: string;
+    instruction?: string;
+    page_count?: number;
+    file_size?: number;
+    created_at?: string;
   };
+  error?: string;
 }
 
 export async function uploadDocument(
-  file: File
+  file: File,
+  instruction?: string
 ): Promise<UploadDocumentResponse> {
   const formData = new FormData();
   formData.append("file", file);
+  if (instruction && instruction.trim()) {
+    formData.append("instruction", instruction.trim());
+  }
 
   const response = await fetch("/api/upload", {
     method: "POST",
@@ -39,22 +63,41 @@ export async function uploadDocument(
       const errorData = await response.json();
       errorMessage = errorData.error || errorData.message || errorMessage;
     } catch {
-      // Keep the default error message.
+      // Keep default error message
     }
 
     throw new Error(errorMessage);
   }
 
-  const result: MulterUploadResponse = await response.json();
+  const result: ServerUploadResponse = await response.json();
 
-  if (!result.success || !result.document) {
-    throw new Error("Invalid upload response from server.");
+  if (!result.success) {
+    throw new Error(result.error || "Invalid upload response from server.");
   }
 
+  const doc = result.document;
+  const docId = result.document_id || result.id || doc?.id || "";
+  const filename = result.filename || doc?.filename || file.name;
+  const storagePath = result.storage_path || doc?.storage_path || "";
+  const savedInstruction = result.instruction || doc?.instruction || instruction || "";
+  const pageCount = result.page_count ?? doc?.page_count;
+
   return {
-    id: result.document.id,
-    document_id: result.document.id,
-    filename: result.document.original_filename,
+    id: docId,
+    document_id: docId,
+    filename,
+    storage_path: storagePath,
+    instruction: savedInstruction,
+    page_count: pageCount,
     message: result.message,
+    document: result.document,
   };
+}
+
+export async function getUploadedDocuments() {
+  const response = await fetch("/api/upload", { method: "GET" });
+  if (!response.ok) {
+    throw new Error("Failed to fetch documents");
+  }
+  return response.json();
 }
