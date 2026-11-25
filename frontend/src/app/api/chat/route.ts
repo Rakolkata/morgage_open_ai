@@ -320,7 +320,7 @@ export async function POST(request: NextRequest) {
     if (selectedAgent === "data_extractor") {
       console.log("Preparing extraction plan...");
 
-      // Orchestrator is used as a prerequisite to create the plan.
+      // Orchestrator creates the extraction plan.
       const orchestratorResponse = await callFastAPI(
         "orchestrator",
         userMessage,
@@ -368,16 +368,10 @@ export async function POST(request: NextRequest) {
         extractorResponse
       );
 
-      const extractedFields = Array.isArray(
+      const rawExtractedFields = Array.isArray(
         extractionResult?.extracted_fields
       )
         ? extractionResult.extracted_fields
-        : [];
-
-      const missingFields = Array.isArray(
-        extractionResult?.missing_fields
-      )
-        ? extractionResult.missing_fields
         : [];
 
       const warnings = Array.isArray(
@@ -395,7 +389,7 @@ export async function POST(request: NextRequest) {
 
       const normalizedFields = fieldsToExtract.map(
         (fieldName: string, index: number) => {
-          const extracted = extractedFields.find(
+          const extracted = rawExtractedFields.find(
             (item: any) =>
               String(item?.field_path ?? "")
                 .trim()
@@ -405,13 +399,15 @@ export async function POST(request: NextRequest) {
 
           const value = extracted?.value ?? null;
 
+          const fieldStatus = isMissingValue(value)
+            ? "MISSING"
+            : "EXTRACTED";
+
           return {
             id: `field-${index + 1}`,
             field_path: fieldName,
             value,
-            status: isMissingValue(value)
-              ? "MISSING"
-              : "EXTRACTED",
+            status: fieldStatus,
             document_type:
               extracted?.document_type ?? null,
             page: extracted?.page ?? null,
@@ -423,11 +419,25 @@ export async function POST(request: NextRequest) {
         }
       );
 
-      // Calculate missing fields from normalized values.
+      // --------------------------------------------------
+      // Calculate missing fields consistently
+      // --------------------------------------------------
+
       const normalizedMissingFields =
         normalizedFields
           .filter((field) => field.status === "MISSING")
           .map((field) => field.field_path);
+
+      // --------------------------------------------------
+      // Create consistent extraction result
+      // --------------------------------------------------
+
+      const normalizedExtractionResult = {
+        documents: extractionResult?.documents ?? [],
+        extracted_fields: normalizedFields,
+        missing_fields: normalizedMissingFields,
+        warnings,
+      };
 
       // --------------------------------------------------
       // Save to PostgreSQL
@@ -435,7 +445,7 @@ export async function POST(request: NextRequest) {
 
       const savedExtractionData = {
         extraction_plan: extractionPlan,
-        extraction_result: extractionResult,
+        extraction_result: normalizedExtractionResult,
         fields: normalizedFields,
         missing_fields: normalizedMissingFields,
         warnings,
@@ -462,35 +472,49 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        answer:
-          extractorResponse.answer ??
-          JSON.stringify(
-            extractionResult,
-            null,
-            2
-          ),
+
+        answer: JSON.stringify(
+          normalizedExtractionResult,
+          null,
+          2
+        ),
+
         model:
           extractorResponse.model ??
           orchestratorResponse.model ??
           null,
+
         agent_name:
           extractorResponse.agent_name ??
           "Data Extractor Agent",
-        agent_output: extractionResult,
+
+        // Consistent normalized data
+        agent_output: normalizedExtractionResult,
+
         extraction_plan: extractionPlan,
-        extraction_result: extractionResult,
-        extracted_fields: extractedFields,
+
+        extraction_result: normalizedExtractionResult,
+
+        extracted_fields: normalizedFields,
+
         fields: normalizedFields,
+
         missing_fields: normalizedMissingFields,
+
         warnings,
+
         file_name:
           extractorResponse.file_name ??
           document.filename,
+
         status:
           extractorResponse.status ??
           "success",
+
         document_id: documentId,
+
         conversation_id: conversationId,
+
         selected_agent: "data_extractor",
       });
     }
@@ -534,6 +558,10 @@ export async function POST(request: NextRequest) {
         selected_agent: "auditor",
       });
     }
+
+    // --------------------------------------------------
+    // Fallback
+    // --------------------------------------------------
 
     return NextResponse.json(
       {
