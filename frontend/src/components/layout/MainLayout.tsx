@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState } from "react";
@@ -11,6 +12,7 @@ import {
   ShieldCheck,
   Upload,
   Clock3,
+  RefreshCw,
 } from "lucide-react";
 
 import WorkspaceSidebar from "../sidebar/WorkspaceSidebar";
@@ -28,7 +30,32 @@ export default function MainLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState("Document Assistant");
 
-  const { clearChat } = useChatContext();
+  const {
+    clearChat,
+    currentDocument,
+    extractedFields,
+    extractedDataLoading,
+    extractedDataError,
+    refreshExtractedData,
+  } = useChatContext();
+
+  const handleTabChange = (tabName: string) => {
+    setActiveTab(tabName);
+
+    if (tabName === "Extracted Data") {
+      void refreshExtractedData();
+    }
+  };
+
+  const documentName =
+    typeof currentDocument?.filename === "string"
+      ? currentDocument.filename
+      : "No document selected";
+
+  const pageCount =
+    typeof currentDocument?.page_count === "number"
+      ? currentDocument.page_count
+      : null;
 
   return (
     <main className="app-container">
@@ -82,7 +109,7 @@ export default function MainLayout() {
                     key={tab.name}
                     type="button"
                     className={`workspace-tab ${isActive ? "active" : ""}`}
-                    onClick={() => setActiveTab(tab.name)}
+                    onClick={() => handleTabChange(tab.name)}
                   >
                     <Icon size={17} />
                     <span>{tab.name}</span>
@@ -95,11 +122,114 @@ export default function MainLayout() {
               {activeTab === "Document Assistant" && <ChatWindow />}
 
               {activeTab === "Extracted Data" && (
-                <PlaceholderTab
-                  icon={<Table2 size={22} />}
-                  title="Extracted Data"
-                  description="Extracted loan information will appear here after document processing."
-                />
+                <section className="workspace-placeholder">
+                  <div className="placeholder-icon">
+                    <Table2 size={22} />
+                  </div>
+
+                  <h2>Extracted Data</h2>
+
+                  <p>
+                    Review the information extracted from your selected
+                    document.
+                  </p>
+
+                  <div className="flex items-center justify-between w-full mb-4">
+                    <div>
+                      <strong className="text-sm">
+                        {documentName}
+                      </strong>
+                      {pageCount !== null && (
+                        <p className="text-xs text-gray-500">
+                          {pageCount} pages
+                        </p>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => void refreshExtractedData()}
+                      disabled={extractedDataLoading}
+                      className="icon-button"
+                      title="Refresh extracted data"
+                      aria-label="Refresh extracted data"
+                    >
+                      <RefreshCw
+                        size={17}
+                        className={
+                          extractedDataLoading ? "animate-spin" : ""
+                        }
+                      />
+                    </button>
+                  </div>
+
+                  {extractedDataLoading ? (
+                    <p>Loading extracted data...</p>
+                  ) : extractedDataError ? (
+                    <p className="text-red-600">
+                      {extractedDataError}
+                    </p>
+                  ) : extractedFields.length > 0 ? (
+                    <div className="placeholder-table">
+                      <div className="placeholder-table-header">
+                        <span>Field</span>
+                        <span>Details</span>
+                        <span>Status</span>
+                      </div>
+
+                      {extractedFields.map((field) => (
+                        <div
+                          className="placeholder-table-row"
+                          key={field.id}
+                        >
+                          <span>{field.field_path}</span>
+
+                          <span>
+                            {field.value?.trim() || "—"}
+                          </span>
+
+                          <span>
+                            {field.value?.trim()
+                              ? "Extracted"
+                              : "Missing"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="placeholder-table">
+                      <div className="placeholder-table-header">
+                        <span>Field</span>
+                        <span>Details</span>
+                        <span>Status</span>
+                      </div>
+
+                      <div className="placeholder-table-row">
+                        <span>Document</span>
+                        <span>
+                          {currentDocument
+                            ? documentName
+                            : "Waiting for upload"}
+                        </span>
+                        <span>
+                          {currentDocument ? "Uploaded" : "Pending"}
+                        </span>
+                      </div>
+
+                      <div className="placeholder-table-row">
+                        <span>Processing</span>
+                        <span>Not started</span>
+                        <span>Pending</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <span className="placeholder-note">
+                    {currentDocument
+                      ? "Extracted fields are loaded from the saved document data."
+                      : "Upload a loan document using the Document Assistant to begin."}
+                  </span>
+                </section>
               )}
 
               {activeTab === "Audit Report" && (
@@ -133,8 +263,10 @@ export default function MainLayout() {
 
               <div className="current-document-content">
                 <span className="details-label">CURRENT DOCUMENT</span>
-                <strong>No document selected</strong>
-                <p>-- pages</p>
+                <strong>{documentName}</strong>
+                <p>
+                  {pageCount !== null ? `${pageCount} pages` : "-- pages"}
+                </p>
               </div>
             </div>
 
@@ -144,13 +276,17 @@ export default function MainLayout() {
               <StatusRow
                 icon={<Upload size={17} />}
                 label="Document Upload"
-                status="Pending"
+                status={currentDocument ? "Completed" : "Pending"}
               />
 
               <StatusRow
                 icon={<Table2 size={17} />}
                 label="Data Extraction"
-                status="Pending"
+                status={
+                  extractedFields.length > 0
+                    ? "Completed"
+                    : "Pending"
+                }
               />
 
               <StatusRow
@@ -204,7 +340,11 @@ function StatusRow({
     <div className="details-status-row">
       {icon}
       <span>{label}</span>
-      <span className={`status-badge ${status === "Completed" ? "completed" : ""}`}>
+      <span
+        className={`status-badge ${
+          status === "Completed" ? "completed" : ""
+        }`}
+      >
         {status}
       </span>
     </div>

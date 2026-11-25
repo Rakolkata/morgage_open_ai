@@ -1,5 +1,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
+import { Agent } from "undici";
 import { prisma } from "@/lib/prisma";
 import fs from "fs/promises";
 import path from "path";
@@ -7,95 +8,65 @@ import path from "path";
 export const runtime = "nodejs";
 export const maxDuration = 600;
 
-const FASTAPI_URL =
-  process.env.FASTAPI_URL || "http://127.0.0.1:8000";
+const FASTAPI_URL = (
+  process.env.FASTAPI_URL || "http://127.0.0.1:8000"
+).replace(/\/+$/, "");
 
-// Mortgage extraction instructions
-const extractionTask = {
-  task: "Extract the document and prepare the necessary fields for the mortgage loan application.",
+const EXTRACTION_TASK =
+  "Extract the document and prepare the necessary fields for the mortgage loan application.";
 
-  document_types: ["OTHER"],
-
-  schema_name: "OTHER",
-
-  fields_to_extract: [
-    "Borrower Full Name",
-    "Property Address",
-    "Base Loan Amount",
-    "Note Interest Rate",
-    "Monthly Principal and Interest Payment",
-    "Loan Term / Amortization",
-    "Lender Name",
-  ],
-
-  instructions: [
-    "Locate the borrower's full name in the document. It is typically found in the header or on the first page.",
-    "Identify the property address by looking for the address details provided in the document. This is usually found on the first page.",
-    "Find the base loan amount by searching for the total loan amount mentioned in the document. This is usually found on the first page.",
-    "Locate the note interest rate by looking for the interest rate specified in the document. This is typically found on the first page.",
-    "Extract the monthly principal and interest payment by finding the monthly payment details provided in the document. This is usually found on the first page.",
-    "Identify the loan term or amortization period by searching for the duration of the loan mentioned in the document. This is typically found on the first page.",
-    "Find the lender's name by locating the information provided about the lending institution in the document. This is usually found on the first page.",
-  ],
-};
+const fastApiDispatcher = new Agent({
+  headersTimeout: 600000,
+  bodyTimeout: 600000,
+  connectTimeout: 30000,
+});
 
 export async function POST(request: NextRequest) {
   try {
-    // 1. Receive frontend request
     const body = await request.json();
 
     const documentId = body.document_id;
     const conversationId = body.conversation_id ?? null;
-    const userMessage = body.message ?? "";
+
+    const userMessage =
+      typeof body.message === "string" && body.message.trim()
+        ? body.message.trim()
+        : "Extract data from the uploaded mortgage document.";
 
     if (!documentId) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "document_id is required",
-        },
+        { success: false, error: "document_id is required" },
         { status: 400 }
       );
     }
 
-    // 2. Find uploaded document in PostgreSQL
+    // Find document in PostgreSQL.
     const document = await prisma.documents.findUnique({
-      where: {
-        id: String(documentId),
-      },
+      where: { id: String(documentId) },
     });
 
     if (!document) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "Document not found",
-        },
+        { success: false, error: "Document not found" },
         { status: 404 }
       );
     }
 
-    // 3. Get PDF storage path
-    const storagePath = document.storage_path;
-
-    if (!storagePath) {
+    if (!document.storage_path) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "Document storage path is missing",
-        },
+        { success: false, error: "Document storage path is missing" },
         { status: 404 }
       );
     }
 
-    // 4. Validate file location
+    // Validate uploaded PDF location.
     const uploadsDirectory = path.resolve(
       process.cwd(),
       "..",
       "uploads"
     );
 
-    const absoluteFilePath = path.resolve(storagePath);
+    const absoluteFilePath = path.resolve(document.storage_path);
 
     const relativePath = path.relative(
       uploadsDirectory,
@@ -103,49 +74,54 @@ export async function POST(request: NextRequest) {
     );
 
     if (
-      relativePath.startsWith("..") ||
+      relativePath === ".." ||
+      relativePath.startsWith(`..${path.sep}`) ||
       path.isAbsolute(relativePath)
     ) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid document storage path",
-        },
+        { success: false, error: "Invalid document storage path" },
         { status: 403 }
       );
     }
 
-    // 5. Read actual uploaded PDF
+    await fs.access(absoluteFilePath);
+
     const pdfBuffer = await fs.readFile(absoluteFilePath);
 
-    // 6. Prepare instruction for Orchestrator Agent
-    const instruction = JSON.stringify(extractionTask);
+    if (pdfBuffer.length === 0) {
+      return NextResponse.json(
+        { success: false, error: "Uploaded PDF file is empty" },
+        { status: 400 }
+      );
+    }
 
-    // 7. Create multipart form data for FastAPI
+    // Prepare FastAPI request.
     const formData = new FormData();
 
-    formData.append("msg", instruction);
-    formData.append("agent", "orchestrator");
+    formData.append("msg", userMessage);
+    formData.append("agent", "workflow");
+    formData.append("task", EXTRACTION_TASK);
 
     formData.append(
       "file",
-      new Blob([pdfBuffer], {
+      new Blob([new Uint8Array(pdfBuffer)], {
         type: "application/pdf",
       }),
-      document.filename || "mortgage_document.pdf"
+      document.filename
     );
 
-    // 8. Send PDF and instructions to FastAPI
+    console.log("Sending PDF to FastAPI:", document.filename);
+
     const fastApiResponse = await fetch(
       `${FASTAPI_URL}/api/v1/chat`,
       {
         method: "POST",
         body: formData,
+        dispatcher: fastApiDispatcher,
         signal: AbortSignal.timeout(600000),
-      }
+      } as RequestInit
     );
 
-    // 9. Read FastAPI response
     const responseText = await fastApiResponse.text();
 
     let fastApiData: any;
@@ -153,17 +129,11 @@ export async function POST(request: NextRequest) {
     try {
       fastApiData = JSON.parse(responseText);
     } catch {
-      fastApiData = {
-        response: responseText,
-      };
+      fastApiData = { response: responseText };
     }
 
-    // 10. Handle FastAPI errors
     if (!fastApiResponse.ok) {
-      console.error(
-        "FASTAPI ERROR:",
-        fastApiData
-      );
+      console.error("FASTAPI ERROR:", fastApiData);
 
       return NextResponse.json(
         {
@@ -176,47 +146,107 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 11. Get actual AI-generated answer
-    const answer =
-      fastApiData.answer ??
-      fastApiData.response ??
-      fastApiData.message ??
-      fastApiData.result ??
-      JSON.stringify(fastApiData);
+    // Extract workflow output.
+    const workflowOutput = fastApiData.agent_output ?? null;
 
-    // 12. Return actual FastAPI response to frontend
-    return NextResponse.json({
-      success: true,
+    const extractionPlan =
+      workflowOutput?.extraction_plan ?? null;
 
-      answer,
+    const extractionResult =
+      workflowOutput?.extraction_result ?? null;
 
-      agent_name: fastApiData.agent_name ?? null,
+    const extractedFields =
+      Array.isArray(extractionResult?.extracted_fields)
+        ? extractionResult.extracted_fields
+        : [];
 
-      agent_output: fastApiData.agent_output ?? null,
+    const missingFields =
+      Array.isArray(extractionResult?.missing_fields)
+        ? extractionResult.missing_fields
+        : [];
 
-      model: fastApiData.model ?? null,
+    const warnings =
+      Array.isArray(extractionResult?.warnings)
+        ? extractionResult.warnings
+        : [];
 
-      file_name: fastApiData.file_name ?? document.filename,
+    // Build the complete editable field list.
+    const fieldsToExtract = Array.isArray(
+      extractionPlan?.fields_to_extract
+    )
+      ? extractionPlan.fields_to_extract
+      : [];
 
-      status: fastApiData.status ?? "success",
+    const normalizedFields = fieldsToExtract.map(
+      (fieldName: string, index: number) => {
+        const extracted = extractedFields.find(
+          (item: any) =>
+            item.field_path?.toLowerCase() ===
+            fieldName.toLowerCase()
+        );
 
-      conversation_id: conversationId,
+        return {
+          id: `field-${index + 1}`,
+          field_path: fieldName,
+          value: extracted?.value ?? "",
+          status: extracted ? "EXTRACTED" : "MISSING",
+          document_type: extracted?.document_type ?? null,
+          page: extracted?.page ?? null,
+          source_text: extracted?.source_text ?? null,
+          confidence: extracted?.confidence ?? null,
+        };
+      }
+    );
 
-      document_id: documentId,
+    // Save extraction results permanently.
+    const savedExtractionData = {
+      extraction_plan: extractionPlan,
+      extraction_result: extractionResult,
+      fields: normalizedFields,
+      missing_fields: missingFields,
+      warnings,
+      updated_at: new Date().toISOString(),
+    };
+
+    await prisma.documents.update({
+      where: { id: String(documentId) },
+      data: {
+        extracted_data: savedExtractionData,
+      },
     });
 
+    console.log(
+      "Extraction results saved to PostgreSQL:",
+      documentId
+    );
+
+    return NextResponse.json({
+      success: true,
+      answer: fastApiData.answer ?? "",
+      agent_name: fastApiData.agent_name ?? null,
+      agent_output: workflowOutput,
+      extraction_plan: extractionPlan,
+      extraction_result: extractionResult,
+      extracted_fields: extractedFields,
+      missing_fields: missingFields,
+      warnings,
+      fields: normalizedFields,
+      model: fastApiData.model ?? null,
+      file_name: fastApiData.file_name ?? document.filename,
+      status: fastApiData.status ?? "success",
+      conversation_id: conversationId,
+      document_id: documentId,
+    });
   } catch (error: unknown) {
     console.error("CHAT API ERROR:", error);
-
-    const errorMessage =
-      error instanceof Error
-        ? error.message
-        : "Internal server error";
 
     return NextResponse.json(
       {
         success: false,
-        error: errorMessage,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Internal server error",
       },
       { status: 500 }
     );

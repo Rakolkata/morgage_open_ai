@@ -3,6 +3,7 @@
 
 import { useEffect, useRef } from "react";
 import { Sparkles } from "lucide-react";
+
 import ChatMessage from "./ChatMessage";
 import MessageInput from "./MessageInput";
 import TypingIndicator from "./TypingIndicator";
@@ -21,7 +22,7 @@ export default function ChatWindow() {
 
   return (
     <section className="chat-window">
-      {messages.length === 0 ? (
+      {messages.length === 0 && !loading ? (
         <div className="chat-empty">
           <div className="empty-icon">
             <Sparkles size={27} />
