@@ -70,6 +70,7 @@ class OllamaService:
 
         # Initially allow one LLM request at a time
         self.semaphore = asyncio.Semaphore(1)
+        self.provider = "ollama"
 
         logger.info(
             "Initialized OllamaService with model '%s' at host '%s'",
@@ -146,3 +147,35 @@ class OllamaService:
 
         logger.info("%s execution completed successfully", agent_name)
         return result
+
+    async def generate_text(
+        self,
+        prompt: str,
+        system_prompt: str = ""
+    ) -> str:
+        """Standard text generation without schema enforcement."""
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        async with self.semaphore:
+            try:
+                response = await self.client.chat(
+                    model=self.model,
+                    messages=messages,
+                    options={"temperature": 0.1, "num_ctx": 8192}
+                )
+            except httpx.ConnectError as exc:
+                logger.error("Could not connect to Ollama at %s: %s", self.host, exc)
+                raise ConnectionError(
+                    f"Could not connect to Ollama at {self.host}. "
+                    f"Please ensure Ollama is running and accessible."
+                ) from exc
+
+        raw_message = (
+            response.message.content
+            if hasattr(response, "message") and hasattr(response.message, "content")
+            else response.get("message", {}).get("content", "")
+        )
+        return clean_json_text(raw_message)

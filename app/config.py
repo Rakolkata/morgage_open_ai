@@ -98,11 +98,16 @@ class Settings:
             }
 
         if not base_url or not model:
+            missing_var = (
+                "OLLAMA_BASE_URL or OLLAMA_MODEL"
+                if self.llm_mode == "ollama"
+                else "VLLM_BASE_URL or VLLM_MODEL"
+            )
             return {
                 "state": "not_configured",
                 "ready": False,
                 "is_mock": False,
-                "message": "OLLAMA_BASE_URL or OLLAMA_MODEL is missing."
+                "message": f"{missing_var} is missing."
             }
 
         return {
@@ -149,9 +154,9 @@ def get_settings() -> Settings:
         ollama_model=ollama_model,
         timeout_seconds=timeout,
         vllm_timeout_seconds=timeout,
-        vllm_base_url=os.getenv("VLLM_BASE_URL", "").strip(),
-        vllm_api_key=os.getenv("VLLM_API_KEY", "").strip(),
-        vllm_model=os.getenv("VLLM_MODEL", "").strip(),
+        vllm_base_url=os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1").strip(),
+        vllm_api_key=os.getenv("VLLM_API_KEY", "EMPTY").strip() or "EMPTY",
+        vllm_model=os.getenv("VLLM_MODEL", "").strip() or ollama_model,
         max_upload_mb=_int("MAX_UPLOAD_MB", 25, 1),
         max_pdf_pages=_int("MAX_PDF_PAGES", 300, 1),
         context_char_budget=_int("CONTEXT_CHAR_BUDGET", 12000, 2000),

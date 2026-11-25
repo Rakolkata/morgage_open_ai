@@ -4,12 +4,12 @@ from typing import Any
 
 from app.agents.base_agent import BaseAgent
 from app.agents.schemas import ExtractionResult
-from app.llm.ollama_client import OllamaService
+from app.llm import LLMClient
 
 
 class DataExtractorAgent(BaseAgent):
 
-    def __init__(self, llm: OllamaService | None = None):
+    def __init__(self, llm: LLMClient | Any = None):
 
         system_prompt = """
 You are the Data Extractor Agent of a mortgage document processing application.

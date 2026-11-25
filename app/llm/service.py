@@ -27,9 +27,22 @@ def clean_think_tags(text: str) -> str:
 class LLMService:
     def __init__(self):
         self.settings = get_settings()
-        self.base_url = (self.settings.ollama_base_url or "http://localhost:11434/api/generate").strip()
-        self.model_name = (self.settings.ollama_model or "qwen2.5:1.5b").strip()
-        self.timeout = getattr(self.settings, "timeout_seconds", 120.0)
+        self.mode = (self.settings.llm_mode or "ollama").strip().lower()
+
+        if self.mode in {"vllm", "v_llm", "openai"}:
+            self.base_url = (self.settings.vllm_base_url or "http://localhost:8000/v1").strip()
+            self.model_name = (
+                self.settings.vllm_model
+                or self.settings.ollama_model
+                or "qwen2.5:1.5b"
+            ).strip()
+            self.api_key = (self.settings.vllm_api_key or "EMPTY").strip()
+            self.timeout = getattr(self.settings, "vllm_timeout_seconds", 120.0)
+        else:
+            self.base_url = (self.settings.ollama_base_url or "http://localhost:11434/api/generate").strip()
+            self.model_name = (self.settings.ollama_model or "qwen2.5:1.5b").strip()
+            self.api_key = (self.settings.ollama_api_key or "ollama").strip()
+            self.timeout = getattr(self.settings, "timeout_seconds", 120.0)
 
     def _prepare_request(self, prompt: str) -> tuple[str, dict[str, Any], str]:
         """
@@ -124,10 +137,14 @@ class LLMService:
         )
 
         req_body = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if getattr(self, "api_key", None) and self.api_key not in {"EMPTY", "ollama"}:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
         req = urllib.request.Request(
             target_url,
             data=req_body,
-            headers={"Content-Type": "application/json"}
+            headers=headers
         )
 
         try:

@@ -3,22 +3,22 @@ from __future__ import annotations
 from typing import Any
 from pydantic import BaseModel
 
-from app.llm.ollama_client import OllamaService
+from app.llm import LLMClient, get_llm_service
 
 
 class BaseAgent:
 
     def __init__(
         self,
-        llm: OllamaService | None = None,
+        llm: LLMClient | Any = None,
         name: str = "BaseAgent",
         system_prompt: str = "You are a helpful structured extraction agent.",
         output_schema: type[BaseModel] | None = None
     ):
-        if isinstance(llm, OllamaService):
+        if llm is not None:
             self.llm = llm
         else:
-            self.llm = OllamaService()
+            self.llm = get_llm_service()
 
         self.name = name
         self.system_prompt = system_prompt

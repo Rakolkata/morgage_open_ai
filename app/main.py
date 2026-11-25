@@ -18,7 +18,7 @@ from app.agents import (
 from app.database import init_db, save_chat_log
 from app.document import extract_text_from_file_bytes
 from app.errors import AppError, http_error
-from app.llm import LLMService, OllamaService
+from app.llm import LLMService, get_llm_service
 from app.schemas import ChatResponse
 from app.services.export_service import EXPORTS_DIR
 
@@ -219,13 +219,13 @@ async def chat(
     )
 
     try:
-        ollama = OllamaService()
+        llm = get_llm_service()
 
         # --------------------------------------------------
         # 1. Orchestrator Agent (with Document Support)
         # --------------------------------------------------
         if clean_agent in {"orchestrator", "orchestrator_agent", "plan", "planner"}:
-            agent_instance = OrchestratorAgent(llm=ollama)
+            agent_instance = OrchestratorAgent(llm=llm)
 
             # Check if custom schemas list is provided
             schemas_raw = extra_form.get("schemas") or extra_form.get("available_schemas")
@@ -258,7 +258,7 @@ async def chat(
 
             return ChatResponse(
                 answer=ans_text,
-                model=ollama.model,
+                model=llm.model,
                 agent_name=agent_instance.name,
                 agent_output=output_dict,
                 file_name=file_name,
@@ -269,7 +269,7 @@ async def chat(
         # 2. Data Extractor Agent (with Document Support)
         # --------------------------------------------------
         if clean_agent in {"data_extractor", "data_extractor_agent", "extractor", "extract"}:
-            agent_instance = DataExtractorAgent(llm=ollama)
+            agent_instance = DataExtractorAgent(llm=llm)
 
             # If file is attached, use its content; otherwise use prompt as document content
             content_to_extract = extracted_doc_text if extracted_doc_text else prompt
@@ -292,7 +292,7 @@ async def chat(
 
             return ChatResponse(
                 answer=ans_text,
-                model=ollama.model,
+                model=llm.model,
                 agent_name=agent_instance.name,
                 agent_output=output_dict,
                 file_name=file_name,
@@ -303,7 +303,7 @@ async def chat(
         # 3. Auditor Agent (with Document & Export Support)
         # --------------------------------------------------
         if clean_agent in {"auditor", "auditor_agent", "audit"}:
-            agent_instance = AuditorAgent(llm=ollama)
+            agent_instance = AuditorAgent(llm=llm)
 
             # Determine extracted data: parse if provided in form, or auto-extract from document
             raw_ext = extra_form.get("extracted_data") or extra_form.get("data")
@@ -321,7 +321,7 @@ async def chat(
             # If no extracted data provided, extract data from document automatically
             if not extracted_data_obj and extracted_doc_text:
                 logger.info("Auditor: Auto-extracting mortgage fields from attached document before audit...")
-                extractor_instance = DataExtractorAgent(llm=ollama)
+                extractor_instance = DataExtractorAgent(llm=llm)
                 extraction_result = await extractor_instance.extract(
                     extraction_plan="Extract all key mortgage terms: Borrower Full Name, Property Address, Base Loan Amount, Note Interest Rate, Monthly Principal and Interest Payment, Loan Term / Amortization, Lender Name.",
                     page_content=extracted_doc_text
@@ -415,7 +415,7 @@ async def chat(
 
             return ChatResponse(
                 answer=ans_text,
-                model=ollama.model,
+                model=llm.model,
                 agent_name=agent_instance.name,
                 agent_output=output_dict,
                 file_name=file_name,
@@ -457,7 +457,7 @@ async def chat(
     except AppError:
         raise
     except ConnectionError as exc:
-        logger.error("Connection error with Ollama: %s", exc)
+        logger.error("Connection error with LLM backend: %s", exc)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to process request: %s", exc)

@@ -5,7 +5,7 @@ from typing import Any
 
 from app.agents.base_agent import BaseAgent
 from app.agents.schemas import AuditResult
-from app.llm.ollama_client import OllamaService
+from app.llm import LLMClient
 from app.services.export_service import create_audit_exports
 
 logger = logging.getLogger(__name__)
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class AuditorAgent(BaseAgent):
 
-    def __init__(self, llm: OllamaService | None = None):
+    def __init__(self, llm: LLMClient | Any = None):
 
         system_prompt = """
 You are the Auditor Agent of a mortgage document auditing application.
