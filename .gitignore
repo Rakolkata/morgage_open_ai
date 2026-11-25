@@ -36,3 +36,9 @@ frontend/.env*.local
 
 # Frontend backup - do not commit
 frontend_backup_before_merge/
+
+# Uploads
+uploads/
+
+# Exports
+exports/

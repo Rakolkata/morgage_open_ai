@@ -10,6 +10,9 @@ class ChatResponse(BaseModel):
     agent_output: dict[str, Any] | None = Field(default=None, description="Structured Pydantic output from BaseAgent")
     file_name: str | None = Field(default=None, description="Name of the uploaded document (if provided)")
     status: str = Field(default="success", description="Status of the response")
+    download_url: str | None = Field(default=None, description="Direct URL to download the audited data in the requested format")
+    download_format: str | None = Field(default=None, description="Format of the downloadable audit report (excel, json, xml, csv)")
+    available_downloads: dict[str, str] = Field(default_factory=dict, description="Dictionary of format names to download URLs")
 
 
 class Evidence(BaseModel):

@@ -129,3 +129,23 @@ class AuditResult(BaseModel):
     missing_evidence: int = 0
 
     findings: list[AuditFinding] = Field(default_factory=list)
+
+    download_url: str | None = Field(
+        default=None,
+        description="Direct download link to download the audited data file in the desired format"
+    )
+
+    file_format: str | None = Field(
+        default=None,
+        description="Desired file format generated (e.g. excel, json, xml, csv)"
+    )
+
+    export_filename: str | None = Field(
+        default=None,
+        description="Filename of the exported report on the server"
+    )
+
+    available_downloads: dict[str, str] = Field(
+        default_factory=dict,
+        description="Map of available export formats to their download URLs"
+    )
