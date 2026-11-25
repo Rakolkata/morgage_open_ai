@@ -13,13 +13,135 @@ const FASTAPI_URL = (
 ).replace(/\/+$/, "");
 
 const EXTRACTION_TASK =
-  "Extract the document and prepare the necessary fields for the mortgage loan application.";
+  "Extract all critical mortgage values from the uploaded document.";
 
 const fastApiDispatcher = new Agent({
   headersTimeout: 600000,
   bodyTimeout: 600000,
   connectTimeout: 30000,
 });
+
+// --------------------------------------------------
+// FastAPI helper
+// --------------------------------------------------
+
+async function callFastAPI(
+  agentName: string,
+  message: string,
+  fileName: string,
+  pdfBuffer: Buffer,
+  extractionPlan?: unknown
+) {
+  const formData = new FormData();
+
+  formData.append("msg", message);
+  formData.append("agent", agentName);
+
+  if (extractionPlan !== undefined) {
+    const planString =
+      typeof extractionPlan === "string"
+        ? extractionPlan
+        : JSON.stringify(extractionPlan);
+
+    formData.append("extraction_plan", planString);
+    formData.append("plan", planString);
+  }
+
+  formData.append(
+    "file",
+    new Blob([new Uint8Array(pdfBuffer)], {
+      type: "application/pdf",
+    }),
+    fileName
+  );
+
+  const response = await fetch(`${FASTAPI_URL}/api/v1/chat`, {
+    method: "POST",
+    body: formData,
+    dispatcher: fastApiDispatcher,
+    signal: AbortSignal.timeout(600000),
+  } as RequestInit);
+
+  const responseText = await response.text();
+
+  let data: any;
+
+  try {
+    data = JSON.parse(responseText);
+  } catch {
+    data = { response: responseText };
+  }
+
+  if (!response.ok) {
+    console.error(`${agentName} FastAPI error:`, data);
+
+    throw new Error(
+      data?.detail ??
+        data?.error ??
+        `FastAPI ${agentName} request failed with status ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+// --------------------------------------------------
+// Response parsing helpers
+// --------------------------------------------------
+
+function getAgentOutput(data: any) {
+  return data?.agent_output ?? data?.output ?? data;
+}
+
+function getExtractionPlan(data: any) {
+  const output = getAgentOutput(data);
+
+  if (output?.extraction_plan) {
+    return output.extraction_plan;
+  }
+
+  if (data?.extraction_plan) {
+    return data.extraction_plan;
+  }
+
+  return output;
+}
+
+function getExtractionResult(data: any) {
+  const output = getAgentOutput(data);
+
+  if (output?.extraction_result) {
+    return output.extraction_result;
+  }
+
+  if (data?.extraction_result) {
+    return data.extraction_result;
+  }
+
+  return output;
+}
+
+function isMissingValue(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+
+  return (
+    normalized === "" ||
+    normalized === "not supplied" ||
+    normalized === "not provided" ||
+    normalized === "not found" ||
+    normalized === "unavailable" ||
+    normalized === "n/a" ||
+    normalized === "null"
+  );
+}
+
+// --------------------------------------------------
+// POST
+// --------------------------------------------------
 
 export async function POST(request: NextRequest) {
   try {
@@ -28,45 +150,87 @@ export async function POST(request: NextRequest) {
     const documentId = body.document_id;
     const conversationId = body.conversation_id ?? null;
 
+    const selectedAgent = String(
+      body.agent ?? "orchestrator"
+    )
+      .trim()
+      .toLowerCase()
+      .replace(/-/g, "_");
+
     const userMessage =
       typeof body.message === "string" && body.message.trim()
         ? body.message.trim()
-        : "Extract data from the uploaded mortgage document.";
+        : EXTRACTION_TASK;
 
     if (!documentId) {
       return NextResponse.json(
-        { success: false, error: "document_id is required" },
+        {
+          success: false,
+          error: "document_id is required",
+        },
         { status: 400 }
       );
     }
 
-    // Find document in PostgreSQL.
+    const supportedAgents = [
+      "orchestrator",
+      "data_extractor",
+      "auditor",
+    ];
+
+    if (!supportedAgents.includes(selectedAgent)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Unsupported agent: ${selectedAgent}`,
+        },
+        { status: 400 }
+      );
+    }
+
+    // --------------------------------------------------
+    // 1. Retrieve document
+    // --------------------------------------------------
+
     const document = await prisma.documents.findUnique({
-      where: { id: String(documentId) },
+      where: {
+        id: String(documentId),
+      },
     });
 
     if (!document) {
       return NextResponse.json(
-        { success: false, error: "Document not found" },
+        {
+          success: false,
+          error: "Document not found",
+        },
         { status: 404 }
       );
     }
 
     if (!document.storage_path) {
       return NextResponse.json(
-        { success: false, error: "Document storage path is missing" },
+        {
+          success: false,
+          error: "Document storage path is missing",
+        },
         { status: 404 }
       );
     }
 
-    // Validate uploaded PDF location.
+    // --------------------------------------------------
+    // 2. Validate document storage path
+    // --------------------------------------------------
+
     const uploadsDirectory = path.resolve(
       process.cwd(),
       "..",
       "uploads"
     );
 
-    const absoluteFilePath = path.resolve(document.storage_path);
+    const absoluteFilePath = path.resolve(
+      document.storage_path
+    );
 
     const relativePath = path.relative(
       uploadsDirectory,
@@ -79,7 +243,10 @@ export async function POST(request: NextRequest) {
       path.isAbsolute(relativePath)
     ) {
       return NextResponse.json(
-        { success: false, error: "Invalid document storage path" },
+        {
+          success: false,
+          error: "Invalid document storage path",
+        },
         { status: 403 }
       );
     }
@@ -90,153 +257,291 @@ export async function POST(request: NextRequest) {
 
     if (pdfBuffer.length === 0) {
       return NextResponse.json(
-        { success: false, error: "Uploaded PDF file is empty" },
+        {
+          success: false,
+          error: "Uploaded PDF file is empty",
+        },
         { status: 400 }
       );
     }
 
-    // Prepare FastAPI request.
-    const formData = new FormData();
-
-    formData.append("msg", userMessage);
-    formData.append("agent", "workflow");
-    formData.append("task", EXTRACTION_TASK);
-
-    formData.append(
-      "file",
-      new Blob([new Uint8Array(pdfBuffer)], {
-        type: "application/pdf",
-      }),
+    console.log(
+      `Selected agent: ${selectedAgent}`,
       document.filename
     );
 
-    console.log("Sending PDF to FastAPI:", document.filename);
+    // --------------------------------------------------
+    // 3. ORCHESTRATOR
+    // --------------------------------------------------
 
-    const fastApiResponse = await fetch(
-      `${FASTAPI_URL}/api/v1/chat`,
-      {
-        method: "POST",
-        body: formData,
-        dispatcher: fastApiDispatcher,
-        signal: AbortSignal.timeout(600000),
-      } as RequestInit
-    );
+    if (selectedAgent === "orchestrator") {
+      console.log("Running Orchestrator Agent...");
 
-    const responseText = await fastApiResponse.text();
-
-    let fastApiData: any;
-
-    try {
-      fastApiData = JSON.parse(responseText);
-    } catch {
-      fastApiData = { response: responseText };
-    }
-
-    if (!fastApiResponse.ok) {
-      console.error("FASTAPI ERROR:", fastApiData);
-
-      return NextResponse.json(
-        {
-          success: false,
-          error: "FastAPI request failed",
-          status: fastApiResponse.status,
-          details: fastApiData,
-        },
-        { status: 502 }
+      const orchestratorResponse = await callFastAPI(
+        "orchestrator",
+        userMessage,
+        document.filename,
+        pdfBuffer
       );
+
+      const orchestratorOutput = getAgentOutput(
+        orchestratorResponse
+      );
+
+      const extractionPlan = getExtractionPlan(
+        orchestratorResponse
+      );
+
+      return NextResponse.json({
+        success: true,
+        answer:
+          orchestratorResponse.answer ??
+          JSON.stringify(orchestratorOutput, null, 2),
+        agent_name:
+          orchestratorResponse.agent_name ??
+          "Orchestrator Agent",
+        agent_output: orchestratorOutput,
+        extraction_plan: extractionPlan,
+        model: orchestratorResponse.model ?? null,
+        file_name:
+          orchestratorResponse.file_name ??
+          document.filename,
+        status: orchestratorResponse.status ?? "success",
+        document_id: documentId,
+        conversation_id: conversationId,
+        selected_agent: "orchestrator",
+      });
     }
 
-    // Extract workflow output.
-    const workflowOutput = fastApiData.agent_output ?? null;
+    // --------------------------------------------------
+    // 4. DATA EXTRACTOR
+    // --------------------------------------------------
 
-    const extractionPlan =
-      workflowOutput?.extraction_plan ?? null;
+    if (selectedAgent === "data_extractor") {
+      console.log("Preparing extraction plan...");
 
-    const extractionResult =
-      workflowOutput?.extraction_result ?? null;
+      // Orchestrator is used as a prerequisite to create the plan.
+      const orchestratorResponse = await callFastAPI(
+        "orchestrator",
+        userMessage,
+        document.filename,
+        pdfBuffer
+      );
 
-    const extractedFields =
-      Array.isArray(extractionResult?.extracted_fields)
+      const extractionPlan = getExtractionPlan(
+        orchestratorResponse
+      );
+
+      if (
+        !extractionPlan ||
+        !Array.isArray(
+          extractionPlan.fields_to_extract
+        )
+      ) {
+        console.error(
+          "Invalid extraction plan:",
+          orchestratorResponse
+        );
+
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Orchestrator did not return a valid extraction plan.",
+            details: orchestratorResponse,
+          },
+          { status: 502 }
+        );
+      }
+
+      console.log("Running Data Extractor Agent...");
+
+      const extractorResponse = await callFastAPI(
+        "data_extractor",
+        EXTRACTION_TASK,
+        document.filename,
+        pdfBuffer,
+        extractionPlan
+      );
+
+      const extractionResult = getExtractionResult(
+        extractorResponse
+      );
+
+      const extractedFields = Array.isArray(
+        extractionResult?.extracted_fields
+      )
         ? extractionResult.extracted_fields
         : [];
 
-    const missingFields =
-      Array.isArray(extractionResult?.missing_fields)
+      const missingFields = Array.isArray(
+        extractionResult?.missing_fields
+      )
         ? extractionResult.missing_fields
         : [];
 
-    const warnings =
-      Array.isArray(extractionResult?.warnings)
+      const warnings = Array.isArray(
+        extractionResult?.warnings
+      )
         ? extractionResult.warnings
         : [];
 
-    // Build the complete editable field list.
-    const fieldsToExtract = Array.isArray(
-      extractionPlan?.fields_to_extract
-    )
-      ? extractionPlan.fields_to_extract
-      : [];
+      // --------------------------------------------------
+      // Normalize fields for frontend
+      // --------------------------------------------------
 
-    const normalizedFields = fieldsToExtract.map(
-      (fieldName: string, index: number) => {
-        const extracted = extractedFields.find(
-          (item: any) =>
-            item.field_path?.toLowerCase() ===
-            fieldName.toLowerCase()
-        );
+      const fieldsToExtract: string[] =
+        extractionPlan.fields_to_extract;
 
-        return {
-          id: `field-${index + 1}`,
-          field_path: fieldName,
-          value: extracted?.value ?? "",
-          status: extracted ? "EXTRACTED" : "MISSING",
-          document_type: extracted?.document_type ?? null,
-          page: extracted?.page ?? null,
-          source_text: extracted?.source_text ?? null,
-          confidence: extracted?.confidence ?? null,
-        };
-      }
-    );
+      const normalizedFields = fieldsToExtract.map(
+        (fieldName: string, index: number) => {
+          const extracted = extractedFields.find(
+            (item: any) =>
+              String(item?.field_path ?? "")
+                .trim()
+                .toLowerCase() ===
+              fieldName.trim().toLowerCase()
+          );
 
-    // Save extraction results permanently.
-    const savedExtractionData = {
-      extraction_plan: extractionPlan,
-      extraction_result: extractionResult,
-      fields: normalizedFields,
-      missing_fields: missingFields,
-      warnings,
-      updated_at: new Date().toISOString(),
-    };
+          const value = extracted?.value ?? null;
 
-    await prisma.documents.update({
-      where: { id: String(documentId) },
-      data: {
-        extracted_data: savedExtractionData,
+          return {
+            id: `field-${index + 1}`,
+            field_path: fieldName,
+            value,
+            status: isMissingValue(value)
+              ? "MISSING"
+              : "EXTRACTED",
+            document_type:
+              extracted?.document_type ?? null,
+            page: extracted?.page ?? null,
+            source_text:
+              extracted?.source_text ?? null,
+            confidence:
+              extracted?.confidence ?? null,
+          };
+        }
+      );
+
+      // Calculate missing fields from normalized values.
+      const normalizedMissingFields =
+        normalizedFields
+          .filter((field) => field.status === "MISSING")
+          .map((field) => field.field_path);
+
+      // --------------------------------------------------
+      // Save to PostgreSQL
+      // --------------------------------------------------
+
+      const savedExtractionData = {
+        extraction_plan: extractionPlan,
+        extraction_result: extractionResult,
+        fields: normalizedFields,
+        missing_fields: normalizedMissingFields,
+        warnings,
+        updated_at: new Date().toISOString(),
+      };
+
+      await prisma.documents.update({
+        where: {
+          id: String(documentId),
+        },
+        data: {
+          extracted_data: savedExtractionData,
+        },
+      });
+
+      console.log(
+        "Extraction data saved:",
+        documentId
+      );
+
+      // --------------------------------------------------
+      // Response
+      // --------------------------------------------------
+
+      return NextResponse.json({
+        success: true,
+        answer:
+          extractorResponse.answer ??
+          JSON.stringify(
+            extractionResult,
+            null,
+            2
+          ),
+        model:
+          extractorResponse.model ??
+          orchestratorResponse.model ??
+          null,
+        agent_name:
+          extractorResponse.agent_name ??
+          "Data Extractor Agent",
+        agent_output: extractionResult,
+        extraction_plan: extractionPlan,
+        extraction_result: extractionResult,
+        extracted_fields: extractedFields,
+        fields: normalizedFields,
+        missing_fields: normalizedMissingFields,
+        warnings,
+        file_name:
+          extractorResponse.file_name ??
+          document.filename,
+        status:
+          extractorResponse.status ??
+          "success",
+        document_id: documentId,
+        conversation_id: conversationId,
+        selected_agent: "data_extractor",
+      });
+    }
+
+    // --------------------------------------------------
+    // 5. AUDITOR
+    // --------------------------------------------------
+
+    if (selectedAgent === "auditor") {
+      console.log("Running Auditor Agent...");
+
+      const auditorResponse = await callFastAPI(
+        "auditor",
+        userMessage,
+        document.filename,
+        pdfBuffer
+      );
+
+      const auditorOutput = getAgentOutput(
+        auditorResponse
+      );
+
+      return NextResponse.json({
+        success: true,
+        answer:
+          auditorResponse.answer ??
+          JSON.stringify(auditorOutput, null, 2),
+        agent_name:
+          auditorResponse.agent_name ??
+          "Auditor Agent",
+        agent_output: auditorOutput,
+        model: auditorResponse.model ?? null,
+        file_name:
+          auditorResponse.file_name ??
+          document.filename,
+        status:
+          auditorResponse.status ??
+          "success",
+        document_id: documentId,
+        conversation_id: conversationId,
+        selected_agent: "auditor",
+      });
+    }
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Agent processing could not be completed.",
       },
-    });
-
-    console.log(
-      "Extraction results saved to PostgreSQL:",
-      documentId
+      { status: 500 }
     );
-
-    return NextResponse.json({
-      success: true,
-      answer: fastApiData.answer ?? "",
-      agent_name: fastApiData.agent_name ?? null,
-      agent_output: workflowOutput,
-      extraction_plan: extractionPlan,
-      extraction_result: extractionResult,
-      extracted_fields: extractedFields,
-      missing_fields: missingFields,
-      warnings,
-      fields: normalizedFields,
-      model: fastApiData.model ?? null,
-      file_name: fastApiData.file_name ?? document.filename,
-      status: fastApiData.status ?? "success",
-      conversation_id: conversationId,
-      document_id: documentId,
-    });
   } catch (error: unknown) {
     console.error("CHAT API ERROR:", error);
 
