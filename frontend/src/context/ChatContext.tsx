@@ -1,7 +1,9 @@
+
 "use client";
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useState,
@@ -27,12 +29,25 @@ export interface ChatMessage {
 export interface DocumentData {
   id?: string;
   document_id?: string;
+  filename?: string;
+  page_count?: number;
   data?: {
     id?: string;
     document_id?: string;
     [key: string]: unknown;
   };
   [key: string]: unknown;
+}
+
+export interface ExtractedField {
+  id: string;
+  field_path: string;
+  value: string;
+  status: string;
+  document_type?: string | null;
+  page?: number | null;
+  source_text?: string | null;
+  confidence?: number | null;
 }
 
 export interface Conversation {
@@ -51,6 +66,17 @@ interface ChatContextType {
 
   currentDocument: DocumentData | null;
   setCurrentDocument: (document: DocumentData | null) => void;
+
+  extractedFields: ExtractedField[];
+  setExtractedFields: React.Dispatch<
+    React.SetStateAction<ExtractedField[]>
+  >;
+  extractedDataLoading: boolean;
+  extractedDataError: string | null;
+  refreshExtractedData: () => Promise<void>;
+  saveExtractedFields: (
+    fields: ExtractedField[]
+  ) => Promise<void>;
 
   selectedFile: File | null;
   setSelectedFile: (file: File | null) => void;
@@ -99,9 +125,17 @@ function normalizeDocument(
 
   return {
     ...document,
-    id: documentId,
-    document_id: documentId,
+    id: String(documentId),
+    document_id: String(documentId),
   };
+}
+
+function getDocumentId(
+  document: DocumentData | null
+): string | null {
+  const normalized = normalizeDocument(document);
+
+  return normalized?.document_id || normalized?.id || null;
 }
 
 // -----------------------------
@@ -112,8 +146,16 @@ export function ChatProvider({
   children,
 }: ChatProviderProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [currentDocument, setCurrentDocument] =
+  const [currentDocument, setCurrentDocumentState] =
     useState<DocumentData | null>(null);
+
+  const [extractedFields, setExtractedFields] =
+    useState<ExtractedField[]>([]);
+  const [extractedDataLoading, setExtractedDataLoading] =
+    useState(false);
+  const [extractedDataError, setExtractedDataError] =
+    useState<string | null>(null);
+
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string>("orchestrator");
 
@@ -127,6 +169,115 @@ export function ChatProvider({
 
   const [historyLoaded, setHistoryLoaded] =
     useState<boolean>(false);
+
+  // -----------------------------
+  // Update current document
+  // -----------------------------
+
+  const updateCurrentDocument = (
+    document: DocumentData | null
+  ): void => {
+    setCurrentDocumentState(normalizeDocument(document));
+  };
+
+  // -----------------------------
+  // Load extracted data from PostgreSQL
+  // -----------------------------
+
+  const refreshExtractedData = useCallback(async () => {
+    const documentId = getDocumentId(currentDocument);
+
+    if (!documentId) {
+      setExtractedFields([]);
+      setExtractedDataError(null);
+      return;
+    }
+
+    setExtractedDataLoading(true);
+    setExtractedDataError(null);
+
+    try {
+      const response = await fetch(
+        `/api/documents/${encodeURIComponent(documentId)}/extracted-data`,
+        {
+          method: "GET",
+          cache: "no-store",
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(
+          result.error || "Failed to load extracted data"
+        );
+      }
+
+      setExtractedFields(
+        Array.isArray(result.fields) ? result.fields : []
+      );
+    } catch (error) {
+      console.error("LOAD EXTRACTED DATA ERROR:", error);
+
+      setExtractedDataError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load extracted data"
+      );
+    } finally {
+      setExtractedDataLoading(false);
+    }
+  }, [currentDocument]);
+
+  // Load saved data whenever the selected document changes.
+  useEffect(() => {
+    if (!getDocumentId(currentDocument)) {
+      setExtractedFields([]);
+      setExtractedDataError(null);
+      return;
+    }
+
+    void refreshExtractedData();
+  }, [currentDocument, refreshExtractedData]);
+
+  // -----------------------------
+  // Save edited fields to PostgreSQL
+  // -----------------------------
+
+  const saveExtractedFields = async (
+    fields: ExtractedField[]
+  ): Promise<void> => {
+    const documentId = getDocumentId(currentDocument);
+
+    if (!documentId) {
+      throw new Error("Please select a document first.");
+    }
+
+    const response = await fetch(
+      `/api/documents/${encodeURIComponent(documentId)}/extracted-data`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ fields }),
+      }
+    );
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(
+        result.error || "Failed to save extracted data"
+      );
+    }
+
+    setExtractedFields(
+      Array.isArray(result.fields) ? result.fields : fields
+    );
+
+    setExtractedDataError(null);
+  };
 
   // -----------------------------
   // Load saved conversations
@@ -162,18 +313,14 @@ export function ChatProvider({
         )[0];
 
         setActiveConversationId(latest.id);
-
         setMessages(latest.messages || []);
 
-        setCurrentDocument(
+        setCurrentDocumentState(
           normalizeDocument(latest.document)
         );
       }
     } catch (error) {
-      console.error(
-        "Failed to load chat history:",
-        error
-      );
+      console.error("Failed to load chat history:", error);
     } finally {
       setHistoryLoaded(true);
     }
@@ -190,15 +337,13 @@ export function ChatProvider({
 
     const id =
       activeConversationId ||
-      (typeof crypto !== "undefined" &&
-      crypto.randomUUID
+      (typeof crypto !== "undefined" && crypto.randomUUID
         ? crypto.randomUUID()
         : `chat-${Date.now()}`);
 
-    const existingConversation =
-      conversations.find(
-        (conversation) => conversation.id === id
-      );
+    const existingConversation = conversations.find(
+      (conversation) => conversation.id === id
+    );
 
     const firstUserMessage = messages.find(
       (message) => message.role === "user"
@@ -209,19 +354,14 @@ export function ChatProvider({
 
     const conversation: Conversation = {
       id,
-
       title: firstUserMessage
         ? firstUserMessage.content.slice(0, 55)
         : existingConversation?.title || "New chat",
-
       messages,
-
       document: normalizedDocument,
-
       createdAt:
         existingConversation?.createdAt ||
         new Date().toISOString(),
-
       updatedAt: new Date().toISOString(),
     };
 
@@ -229,22 +369,15 @@ export function ChatProvider({
       setActiveConversationId(id);
     }
 
-    setConversations((previous) => {
-      return [
-        conversation,
-        ...previous.filter(
-          (item) => item.id !== id
-        ),
-      ];
-    });
+    setConversations((previous) => [
+      conversation,
+      ...previous.filter((item) => item.id !== id),
+    ]);
 
     try {
       saveConversation(conversation);
     } catch (error) {
-      console.error(
-        "Failed to save conversation:",
-        error
-      );
+      console.error("Failed to save conversation:", error);
     }
   }, [
     messages,
@@ -257,13 +390,8 @@ export function ChatProvider({
   // Add message
   // -----------------------------
 
-  const addMessage = (
-    message: ChatMessage
-  ): void => {
-    setMessages((previous) => [
-      ...previous,
-      message,
-    ]);
+  const addMessage = (message: ChatMessage): void => {
+    setMessages((previous) => [...previous, message]);
   };
 
   // -----------------------------
@@ -272,7 +400,9 @@ export function ChatProvider({
 
   const clearChat = (): void => {
     setMessages([]);
-    setCurrentDocument(null);
+    setCurrentDocumentState(null);
+    setExtractedFields([]);
+    setExtractedDataError(null);
     setSelectedFile(null);
     setActiveConversationId(null);
     setLoading(false);
@@ -282,9 +412,7 @@ export function ChatProvider({
   // Open conversation
   // -----------------------------
 
-  const openConversation = (
-    id: string
-  ): void => {
+  const openConversation = (id: string): void => {
     const conversation = conversations.find(
       (item) => item.id === id
     );
@@ -292,33 +420,12 @@ export function ChatProvider({
     if (!conversation) return;
 
     setLoading(false);
+    setActiveConversationId(conversation.id);
+    setMessages(conversation.messages || []);
 
-    setActiveConversationId(
-      conversation.id
+    setCurrentDocumentState(
+      normalizeDocument(conversation.document)
     );
-
-    setMessages(
-      conversation.messages || []
-    );
-
-    setCurrentDocument(
-      normalizeDocument(
-        conversation.document
-      )
-    );
-  };
-
-  // -----------------------------
-  // Update current document
-  // -----------------------------
-
-  const updateCurrentDocument = (
-    document: DocumentData | null
-  ): void => {
-    const normalized =
-      normalizeDocument(document);
-
-    setCurrentDocument(normalized);
   };
 
   // -----------------------------
@@ -332,6 +439,13 @@ export function ChatProvider({
 
     currentDocument,
     setCurrentDocument: updateCurrentDocument,
+
+    extractedFields,
+    setExtractedFields,
+    extractedDataLoading,
+    extractedDataError,
+    refreshExtractedData,
+    saveExtractedFields,
 
     selectedFile,
     setSelectedFile,

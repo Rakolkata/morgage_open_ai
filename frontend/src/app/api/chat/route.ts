@@ -1,5 +1,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
+import { Agent } from "undici";
 import { prisma } from "@/lib/prisma";
 import fs from "fs/promises";
 import path from "path";
@@ -7,49 +8,162 @@ import path from "path";
 export const runtime = "nodejs";
 export const maxDuration = 600;
 
-const FASTAPI_URL =
-  process.env.FASTAPI_URL || "http://127.0.0.1:8000";
+const FASTAPI_URL = (
+  process.env.FASTAPI_URL || "http://127.0.0.1:8000"
+).replace(/\/+$/, "");
 
-// Mortgage extraction instructions
-const extractionTask = {
-  task: "Extract the document and prepare the necessary fields for the mortgage loan application.",
+const EXTRACTION_TASK =
+  "Extract all critical mortgage values from the uploaded document.";
 
-  document_types: ["OTHER"],
+const fastApiDispatcher = new Agent({
+  headersTimeout: 600000,
+  bodyTimeout: 600000,
+  connectTimeout: 30000,
+});
 
-  schema_name: "OTHER",
+// --------------------------------------------------
+// FastAPI helper
+// --------------------------------------------------
 
-  fields_to_extract: [
-    "Borrower Full Name",
-    "Property Address",
-    "Base Loan Amount",
-    "Note Interest Rate",
-    "Monthly Principal and Interest Payment",
-    "Loan Term / Amortization",
-    "Lender Name",
-  ],
+async function callFastAPI(
+  agentName: string,
+  message: string,
+  fileName: string,
+  pdfBuffer: Buffer,
+  extractionPlan?: unknown
+) {
+  const formData = new FormData();
 
-  instructions: [
-    "Locate the borrower's full name in the document. It is typically found in the header or on the first page.",
-    "Identify the property address by looking for the address details provided in the document. This is usually found on the first page.",
-    "Find the base loan amount by searching for the total loan amount mentioned in the document. This is usually found on the first page.",
-    "Locate the note interest rate by looking for the interest rate specified in the document. This is typically found on the first page.",
-    "Extract the monthly principal and interest payment by finding the monthly payment details provided in the document. This is usually found on the first page.",
-    "Identify the loan term or amortization period by searching for the duration of the loan mentioned in the document. This is typically found on the first page.",
-    "Find the lender's name by locating the information provided about the lending institution in the document. This is usually found on the first page.",
-  ],
-};
+  formData.append("msg", message);
+  formData.append("agent", agentName);
+
+  if (extractionPlan !== undefined) {
+    const planString =
+      typeof extractionPlan === "string"
+        ? extractionPlan
+        : JSON.stringify(extractionPlan);
+
+    formData.append("extraction_plan", planString);
+    formData.append("plan", planString);
+  }
+
+  formData.append(
+    "file",
+    new Blob([new Uint8Array(pdfBuffer)], {
+      type: "application/pdf",
+    }),
+    fileName
+  );
+
+  const response = await fetch(`${FASTAPI_URL}/api/v1/chat`, {
+    method: "POST",
+    body: formData,
+    dispatcher: fastApiDispatcher,
+    signal: AbortSignal.timeout(600000),
+  } as RequestInit);
+
+  const responseText = await response.text();
+
+  let data: any;
+
+  try {
+    data = JSON.parse(responseText);
+  } catch {
+    data = { response: responseText };
+  }
+
+  if (!response.ok) {
+    console.error(`${agentName} FastAPI error:`, data);
+
+    throw new Error(
+      data?.detail ??
+        data?.error ??
+        `FastAPI ${agentName} request failed with status ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+// --------------------------------------------------
+// Response parsing helpers
+// --------------------------------------------------
+
+function getAgentOutput(data: any) {
+  return data?.agent_output ?? data?.output ?? data;
+}
+
+function getExtractionPlan(data: any) {
+  const output = getAgentOutput(data);
+
+  if (output?.extraction_plan) {
+    return output.extraction_plan;
+  }
+
+  if (data?.extraction_plan) {
+    return data.extraction_plan;
+  }
+
+  return output;
+}
+
+function getExtractionResult(data: any) {
+  const output = getAgentOutput(data);
+
+  if (output?.extraction_result) {
+    return output.extraction_result;
+  }
+
+  if (data?.extraction_result) {
+    return data.extraction_result;
+  }
+
+  return output;
+}
+
+function isMissingValue(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+
+  return (
+    normalized === "" ||
+    normalized === "not supplied" ||
+    normalized === "not provided" ||
+    normalized === "not found" ||
+    normalized === "unavailable" ||
+    normalized === "n/a" ||
+    normalized === "null"
+  );
+}
+
+// --------------------------------------------------
+// POST
+// --------------------------------------------------
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
 
 export async function POST(request: NextRequest) {
   try {
-    // 1. Receive frontend request
     const body = await request.json();
 
     const documentId = body.document_id;
     const conversationId = body.conversation_id ?? null;
-    const userMessage = body.message ?? "";
+
+    const selectedAgent = String(
+      body.agent ?? "orchestrator"
+    )
+      .trim()
+      .toLowerCase()
+      .replace(/-/g, "_");
+
+    const userMessage =
+      typeof body.message === "string" && body.message.trim()
+        ? body.message.trim()
+        : EXTRACTION_TASK;
 
     if (!documentId) {
       return NextResponse.json(
@@ -61,7 +175,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Find uploaded document in PostgreSQL
+    const supportedAgents = [
+      "orchestrator",
+      "data_extractor",
+      "auditor",
+    ];
+
+    if (!supportedAgents.includes(selectedAgent)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Unsupported agent: ${selectedAgent}`,
+        },
+        { status: 400 }
+      );
+    }
+
+    // --------------------------------------------------
+    // 1. Retrieve document
+    // --------------------------------------------------
+
     const document = await prisma.documents.findUnique({
       where: {
         id: String(documentId),
@@ -78,10 +211,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 3. Get PDF storage path
-    const storagePath = document.storage_path;
-
-    if (!storagePath) {
+    if (!document.storage_path) {
       return NextResponse.json(
         {
           success: false,
@@ -91,14 +221,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 4. Validate file location
+    // --------------------------------------------------
+    // 2. Validate document storage path
+    // --------------------------------------------------
+
     const uploadsDirectory = path.resolve(
       process.cwd(),
       "..",
       "uploads"
     );
 
-    const absoluteFilePath = path.resolve(storagePath);
+    const absoluteFilePath = path.resolve(
+      document.storage_path
+    );
 
     const relativePath = path.relative(
       uploadsDirectory,
@@ -106,7 +241,8 @@ export async function POST(request: NextRequest) {
     );
 
     if (
-      relativePath.startsWith("..") ||
+      relativePath === ".." ||
+      relativePath.startsWith(`..${path.sep}`) ||
       path.isAbsolute(relativePath)
     ) {
       return NextResponse.json(
@@ -118,108 +254,307 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 5. Read actual uploaded PDF
+    await fs.access(absoluteFilePath);
+
     const pdfBuffer = await fs.readFile(absoluteFilePath);
 
-    // 6. Prepare instruction for Orchestrator Agent
-    const instruction = JSON.stringify(extractionTask);
-
-    // 7. Create multipart form data for FastAPI
-    const formData = new FormData();
-
-    formData.append("msg", instruction);
-    formData.append("agent", "orchestrator");
-
-    formData.append(
-      "file",
-      new Blob([pdfBuffer], {
-        type: "application/pdf",
-      }),
-      document.filename || "mortgage_document.pdf"
-    );
-
-    // 8. Send PDF and instructions to FastAPI
-    const fastApiResponse = await fetch(
-      `${FASTAPI_URL}/api/v1/chat`,
-      {
-        method: "POST",
-        body: formData,
-        signal: AbortSignal.timeout(600000),
-      }
-    );
-
-    // 9. Read FastAPI response
-    const responseText = await fastApiResponse.text();
-
-    let fastApiData: any;
-
-    try {
-      fastApiData = JSON.parse(responseText);
-    } catch {
-      fastApiData = {
-        response: responseText,
-      };
-    }
-
-    // 10. Handle FastAPI errors
-    if (!fastApiResponse.ok) {
-      console.error(
-        "FASTAPI ERROR:",
-        fastApiData
-      );
-
+    if (pdfBuffer.length === 0) {
       return NextResponse.json(
         {
           success: false,
-          error: "FastAPI request failed",
-          status: fastApiResponse.status,
-          details: fastApiData,
+          error: "Uploaded PDF file is empty",
         },
-        { status: 502 }
+        { status: 400 }
       );
     }
 
-    // 11. Get actual AI-generated answer
-    const answer =
-      fastApiData.answer ??
-      fastApiData.response ??
-      fastApiData.message ??
-      fastApiData.result ??
-      JSON.stringify(fastApiData);
+    console.log(
+      `Selected agent: ${selectedAgent}`,
+      document.filename
+    );
 
-    // 12. Return actual FastAPI response to frontend
-    return NextResponse.json({
-      success: true,
+    // --------------------------------------------------
+    // 3. ORCHESTRATOR
+    // --------------------------------------------------
 
-      answer,
+    if (selectedAgent === "orchestrator") {
+      console.log("Running Orchestrator Agent...");
 
-      agent_name: fastApiData.agent_name ?? null,
+      const orchestratorResponse = await callFastAPI(
+        "orchestrator",
+        userMessage,
+        document.filename,
+        pdfBuffer
+      );
 
-      agent_output: fastApiData.agent_output ?? null,
+      const orchestratorOutput = getAgentOutput(
+        orchestratorResponse
+      );
 
-      model: fastApiData.model ?? null,
+      const extractionPlan = getExtractionPlan(
+        orchestratorResponse
+      );
 
-      file_name: fastApiData.file_name ?? document.filename,
+      return NextResponse.json({
+        success: true,
+        answer:
+          orchestratorResponse.answer ??
+          JSON.stringify(orchestratorOutput, null, 2),
+        agent_name:
+          orchestratorResponse.agent_name ??
+          "Orchestrator Agent",
+        agent_output: orchestratorOutput,
+        extraction_plan: extractionPlan,
+        model: orchestratorResponse.model ?? null,
+        file_name:
+          orchestratorResponse.file_name ??
+          document.filename,
+        status: orchestratorResponse.status ?? "success",
+        document_id: documentId,
+        conversation_id: conversationId,
+        selected_agent: "orchestrator",
+      });
+    }
 
-      status: fastApiData.status ?? "success",
+    // --------------------------------------------------
+    // 4. DATA EXTRACTOR
+    // --------------------------------------------------
 
-      conversation_id: conversationId,
+    if (selectedAgent === "data_extractor") {
+      console.log("Preparing extraction plan...");
 
-      document_id: documentId,
-    });
+      // Orchestrator is used as a prerequisite to create the plan.
+      const orchestratorResponse = await callFastAPI(
+        "orchestrator",
+        userMessage,
+        document.filename,
+        pdfBuffer
+      );
 
-  } catch (error: unknown) {
-    console.error("CHAT API ERROR:", error);
+      const extractionPlan = getExtractionPlan(
+        orchestratorResponse
+      );
 
-    const errorMessage =
-      error instanceof Error
-        ? error.message
-        : "Internal server error";
+      if (
+        !extractionPlan ||
+        !Array.isArray(
+          extractionPlan.fields_to_extract
+        )
+      ) {
+        console.error(
+          "Invalid extraction plan:",
+          orchestratorResponse
+        );
+
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Orchestrator did not return a valid extraction plan.",
+            details: orchestratorResponse,
+          },
+          { status: 502 }
+        );
+      }
+
+      console.log("Running Data Extractor Agent...");
+
+      const extractorResponse = await callFastAPI(
+        "data_extractor",
+        EXTRACTION_TASK,
+        document.filename,
+        pdfBuffer,
+        extractionPlan
+      );
+
+      const extractionResult = getExtractionResult(
+        extractorResponse
+      );
+
+      const extractedFields = Array.isArray(
+        extractionResult?.extracted_fields
+      )
+        ? extractionResult.extracted_fields
+        : [];
+
+      const missingFields = Array.isArray(
+        extractionResult?.missing_fields
+      )
+        ? extractionResult.missing_fields
+        : [];
+
+      const warnings = Array.isArray(
+        extractionResult?.warnings
+      )
+        ? extractionResult.warnings
+        : [];
+
+      // --------------------------------------------------
+      // Normalize fields for frontend
+      // --------------------------------------------------
+
+      const fieldsToExtract: string[] =
+        extractionPlan.fields_to_extract;
+
+      const normalizedFields = fieldsToExtract.map(
+        (fieldName: string, index: number) => {
+          const extracted = extractedFields.find(
+            (item: any) =>
+              String(item?.field_path ?? "")
+                .trim()
+                .toLowerCase() ===
+              fieldName.trim().toLowerCase()
+          );
+
+          const value = extracted?.value ?? null;
+
+          return {
+            id: `field-${index + 1}`,
+            field_path: fieldName,
+            value,
+            status: isMissingValue(value)
+              ? "MISSING"
+              : "EXTRACTED",
+            document_type:
+              extracted?.document_type ?? null,
+            page: extracted?.page ?? null,
+            source_text:
+              extracted?.source_text ?? null,
+            confidence:
+              extracted?.confidence ?? null,
+          };
+        }
+      );
+
+      // Calculate missing fields from normalized values.
+      const normalizedMissingFields =
+        normalizedFields
+          .filter((field) => field.status === "MISSING")
+          .map((field) => field.field_path);
+
+      // --------------------------------------------------
+      // Save to PostgreSQL
+      // --------------------------------------------------
+
+      const savedExtractionData = {
+        extraction_plan: extractionPlan,
+        extraction_result: extractionResult,
+        fields: normalizedFields,
+        missing_fields: normalizedMissingFields,
+        warnings,
+        updated_at: new Date().toISOString(),
+      };
+
+      await prisma.documents.update({
+        where: {
+          id: String(documentId),
+        },
+        data: {
+          extracted_data: savedExtractionData,
+        },
+      });
+
+      console.log(
+        "Extraction data saved:",
+        documentId
+      );
+
+      // --------------------------------------------------
+      // Response
+      // --------------------------------------------------
+
+      return NextResponse.json({
+        success: true,
+        answer:
+          extractorResponse.answer ??
+          JSON.stringify(
+            extractionResult,
+            null,
+            2
+          ),
+        model:
+          extractorResponse.model ??
+          orchestratorResponse.model ??
+          null,
+        agent_name:
+          extractorResponse.agent_name ??
+          "Data Extractor Agent",
+        agent_output: extractionResult,
+        extraction_plan: extractionPlan,
+        extraction_result: extractionResult,
+        extracted_fields: extractedFields,
+        fields: normalizedFields,
+        missing_fields: normalizedMissingFields,
+        warnings,
+        file_name:
+          extractorResponse.file_name ??
+          document.filename,
+        status:
+          extractorResponse.status ??
+          "success",
+        document_id: documentId,
+        conversation_id: conversationId,
+        selected_agent: "data_extractor",
+      });
+    }
+
+    // --------------------------------------------------
+    // 5. AUDITOR
+    // --------------------------------------------------
+
+    if (selectedAgent === "auditor") {
+      console.log("Running Auditor Agent...");
+
+      const auditorResponse = await callFastAPI(
+        "auditor",
+        userMessage,
+        document.filename,
+        pdfBuffer
+      );
+
+      const auditorOutput = getAgentOutput(
+        auditorResponse
+      );
+
+      return NextResponse.json({
+        success: true,
+        answer:
+          auditorResponse.answer ??
+          JSON.stringify(auditorOutput, null, 2),
+        agent_name:
+          auditorResponse.agent_name ??
+          "Auditor Agent",
+        agent_output: auditorOutput,
+        model: auditorResponse.model ?? null,
+        file_name:
+          auditorResponse.file_name ??
+          document.filename,
+        status:
+          auditorResponse.status ??
+          "success",
+        document_id: documentId,
+        conversation_id: conversationId,
+        selected_agent: "auditor",
+      });
+    }
 
     return NextResponse.json(
       {
         success: false,
-        error: errorMessage,
+        error: "Agent processing could not be completed.",
+      },
+      { status: 500 }
+    );
+  } catch (error: unknown) {
+    console.error("CHAT API ERROR:", error);
+
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Internal server error",
       },
       { status: 500 }
     );

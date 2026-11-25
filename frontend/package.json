@@ -18,7 +18,8 @@
     "pdfjs-dist": "^6.5.438",
     "pg": "^8.23.1",
     "react": "*",
-    "react-dom": "*"
+    "react-dom": "*",
+    "undici": "^8.13.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.5",

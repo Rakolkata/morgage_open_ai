@@ -127,7 +127,7 @@ export default function useChat() {
           filename: uploadResult.filename,
           storage_path: uploadResult.storage_path,
           instruction: text,
-          page_count: uploadResult.page_count ?? null,
+         page_count: uploadResult.page_count ?? undefined,
           status: "Uploaded",
         });
 
