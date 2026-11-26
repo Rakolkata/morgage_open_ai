@@ -75,7 +75,7 @@ export default function WorkspaceSidebar({
           Document Assistant
         </Link>
 
-        <Link href="/history" className="sidebar-link">
+        {/* <Link href="/history" className="sidebar-link">
           <History size={18} />
           Chat History
         </Link>
@@ -83,7 +83,7 @@ export default function WorkspaceSidebar({
         <Link href="/settings" className="sidebar-link">
           <Settings size={18} />
           Settings
-        </Link>
+        </Link> */}
       </div>
 
       <div className="recent-documents">
@@ -100,11 +100,10 @@ export default function WorkspaceSidebar({
               <button
                 key={conversation.id}
                 type="button"
-                className={`sidebar-link recent-chat-item ${
-                  activeConversationId === conversation.id
+                className={`sidebar-link recent-chat-item ${activeConversationId === conversation.id
                     ? "active"
                     : ""
-                }`}
+                  }`}
                 onClick={() => openConversation(conversation.id)}
                 title={conversation.title}
               >
