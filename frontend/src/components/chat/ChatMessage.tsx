@@ -613,67 +613,48 @@ export default function ChatMessage({
               {/* EXTRACTED VALUES */}
 
               {extractedFields.length > 0 && (
-                <section>
-                  <div className="flex items-center gap-2 mb-3">
-                    <TableIcon size={18} />
+                <div className="chat-table-wrapper">
+                  <table className="chat-table chat-table-values">
+                    <thead>
+                      <tr>
+                        <th className="chat-col-field">FIELD</th>
+                        <th className="chat-col-value">VALUE</th>
+                        <th className="chat-col-status">STATUS</th>
+                      </tr>
+                    </thead>
 
-                    <h3 className="font-semibold text-base">
-                      Actual Extracted Mortgage Values
-                    </h3>
-                  </div>
+                    <tbody>
+                      {extractedFields.map(
+                        (field, index) => {
+                          const hasValue =
+                            field.value !== null &&
+                            field.value !== undefined &&
+                            String(field.value).trim() !== "" &&
+                            String(field.value).toLowerCase() !==
+                              "not supplied";
 
-                  <div className="overflow-x-auto rounded-lg border">
-                    <table className="w-full border-collapse text-left text-sm">
-                      <thead>
-                        <tr className="border-b bg-gray-100 dark:bg-gray-800">
-                          <th className="p-3">Field</th>
-                          <th className="p-3">Value</th>
-                          <th className="p-3">Status</th>
-                        </tr>
-                      </thead>
+                          return (
+                            <tr
+                              key={`${field.field_path}-${index}`}
+                            >
+                              <td className="chat-col-field">
+                                {field.field_path}
+                              </td>
 
-                      <tbody>
-                        {extractedFields.map(
-                          (field, index) => {
-                            const hasValue =
-                              field.value !== null &&
-                              field.value !== undefined &&
-                              String(field.value).trim() !== "" &&
-                              String(field.value).toLowerCase() !==
-                                "not supplied";
+                              <td className="chat-col-value">
+                                {field.value ?? "—"}
+                              </td>
 
-                            return (
-                              <tr
-                                key={`${field.field_path}-${index}`}
-                                className="border-b last:border-b-0 align-top"
-                              >
-                                <td className="p-3 font-medium">
-                                  {field.field_path}
-                                </td>
-
-                                <td className="p-3 break-words">
-                                  {field.value ?? "—"}
-                                </td>
-
-                                <td className="p-3">
-                                  {hasValue ? (
-                                    <span className="text-green-600 font-medium">
-                                      Extracted
-                                    </span>
-                                  ) : (
-                                    <span className="text-red-500 font-medium">
-                                      Missing
-                                    </span>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          }
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
+                              <td className="chat-col-status">
+                                {hasValue ? "Extracted" : "Missing"}
+                              </td>
+                            </tr>
+                          );
+                        }
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               )}
 
               {/* SOURCE EVIDENCE */}
@@ -681,61 +662,48 @@ export default function ChatMessage({
               {extractedFields.some(
                 (field) => field.source_text
               ) && (
-                <section>
-                  <div className="flex items-center gap-2 mb-3">
-                    <FileSearch size={18} />
+                <div className="chat-table-wrapper">
+                  <table className="chat-table chat-table-evidence">
+                    <thead>
+                      <tr>
+                        <th className="chat-col-field">FIELD</th>
+                        <th className="chat-col-source">SOURCE TEXT</th>
+                        <th className="chat-col-page">PAGE</th>
+                        <th className="chat-col-confidence">CONFIDENCE</th>
+                      </tr>
+                    </thead>
 
-                    <h3 className="font-semibold text-base">
-                      Source Evidence
-                    </h3>
-                  </div>
+                    <tbody>
+                      {extractedFields
+                        .filter(
+                          (field) => field.source_text
+                        )
+                        .map((field, index) => (
+                          <tr key={index}>
+                            <td className="chat-col-field">
+                              {field.field_path}
+                            </td>
 
-                  <div className="overflow-x-auto rounded-lg border">
-                    <table className="w-full border-collapse text-left text-xs">
-                      <thead>
-                        <tr className="border-b bg-gray-100 dark:bg-gray-800">
-                          <th className="p-3">Field</th>
-                          <th className="p-3">Source Text</th>
-                          <th className="p-3">Page</th>
-                          <th className="p-3">Confidence</th>
-                        </tr>
-                      </thead>
+                            <td className="chat-col-source">
+                              {field.source_text}
+                            </td>
 
-                      <tbody>
-                        {extractedFields
-                          .filter(
-                            (field) => field.source_text
-                          )
-                          .map((field, index) => (
-                            <tr
-                              key={index}
-                              className="border-b last:border-b-0 align-top"
-                            >
-                              <td className="p-3 font-medium">
-                                {field.field_path}
-                              </td>
+                            <td className="chat-col-page">
+                              {field.page ?? "—"}
+                            </td>
 
-                              <td className="p-3 break-words">
-                                {field.source_text}
-                              </td>
-
-                              <td className="p-3">
-                                {field.page ?? "—"}
-                              </td>
-
-                              <td className="p-3">
-                                {typeof field.confidence === "number"
-                                  ? `${(
-                                      field.confidence * 100
-                                    ).toFixed(0)}%`
-                                  : "—"}
-                              </td>
-                            </tr>
-                          ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
+                            <td className="chat-col-confidence">
+                              {typeof field.confidence === "number"
+                                ? `${(
+                                    field.confidence * 100
+                                  ).toFixed(0)}%`
+                                : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
 
               {/* MISSING FIELDS */}
