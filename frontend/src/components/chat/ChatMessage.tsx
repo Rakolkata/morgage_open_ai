@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -13,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { useState } from "react";
+import type { ReactNode } from "react";
 
 // ------------------------------------
 // Types
@@ -44,27 +44,11 @@ interface ChatMessageProps {
 }
 
 // ------------------------------------
-// Default Mortgage Fields
-// ------------------------------------
-
-const DEFAULT_MORTGAGE_FIELDS = [
-  "Borrower Full Name",
-  "Property Address",
-  "Base Loan Amount",
-  "Note Interest Rate",
-  "Monthly Principal and Interest Payment",
-  "Loan Term / Amortization",
-  "Lender Name",
-];
-
-// ------------------------------------
 // Helpers
 // ------------------------------------
 
 function parseJSON(value: unknown): any {
-  if (typeof value !== "string") {
-    return value;
-  }
+  if (typeof value !== "string") return value;
 
   try {
     return JSON.parse(value);
@@ -73,9 +57,90 @@ function parseJSON(value: unknown): any {
   }
 }
 
-function normalized(value: string) {
-  return value.trim().toLowerCase();
+function formatLabel(key: string): string {
+  return key
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
+
+// Recursively render JSON as readable text
+function renderReadableValue(value: any, key?: string): ReactNode {
+  if (value === null || value === undefined) return null;
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return null;
+
+    if (
+      value.every(
+        (item) =>
+          typeof item !== "object" || item === null
+      )
+    ) {
+      return (
+        <div key={key} className="mb-3">
+          {key && (
+            <p className="font-semibold mb-1">
+              {formatLabel(key)}
+            </p>
+          )}
+
+          <p>{value.join(", ")}</p>
+        </div>
+      );
+    }
+
+    return (
+      <section key={key} className="mb-3">
+        {key && (
+          <h4 className="font-semibold mb-2">
+            {formatLabel(key)}
+          </h4>
+        )}
+
+        <div className="space-y-3">
+          {value.map((item, index) => (
+            <div key={index}>
+              {renderReadableValue(item)}
+            </div>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  if (typeof value === "object") {
+    return (
+      <section key={key} className="mb-3">
+        {key && (
+          <h4 className="font-semibold mb-2">
+            {formatLabel(key)}
+          </h4>
+        )}
+
+        <div className="space-y-2">
+          {Object.entries(value).map(
+            ([childKey, childValue]) =>
+              renderReadableValue(childValue, childKey)
+          )}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <p key={key} className="mb-2 break-words">
+      {key && (
+        <strong>{formatLabel(key)}: </strong>
+      )}
+
+      {String(value)}
+    </p>
+  );
+}
+
+// ------------------------------------
+// Structured Response Parser
+// ------------------------------------
 
 function getStructuredResponse(content: string) {
   const parsed = parseJSON(content);
@@ -89,6 +154,7 @@ function getStructuredResponse(content: string) {
   const output =
     parsed.agent_output ??
     parsedAnswer?.agent_output ??
+    parsedAnswer?.extraction_result ??
     parsedAnswer ??
     parsed;
 
@@ -100,7 +166,11 @@ function getStructuredResponse(content: string) {
     output.extraction_plan ??
     parsed.extraction_plan ??
     parsedAnswer?.extraction_plan ??
-    {};
+    (Array.isArray(output.fields_to_extract) ||
+    output.task ||
+    output.instructions
+      ? output
+      : {});
 
   const result =
     output.extraction_result ??
@@ -145,14 +215,14 @@ function getStructuredResponse(content: string) {
   };
 
   const hasPlan =
-    Array.isArray(plan?.fields_to_extract) ||
     Boolean(plan?.task) ||
-    Boolean(plan?.instructions);
+    Array.isArray(plan?.fields_to_extract) ||
+    Array.isArray(plan?.instructions);
 
   const hasResult =
-    Array.isArray(normalizedResult.extracted_fields) ||
-    Array.isArray(normalizedResult.missing_fields) ||
-    Array.isArray(normalizedResult.warnings);
+    (normalizedResult.extracted_fields?.length ?? 0) > 0 ||
+    (normalizedResult.missing_fields?.length ?? 0) > 0 ||
+    (normalizedResult.warnings?.length ?? 0) > 0;
 
   if (!hasPlan && !hasResult) {
     return null;
@@ -186,75 +256,14 @@ export default function ChatMessage({
   const metadata = structured?.metadata;
   const output = structured?.output;
 
-  // ------------------------------------
-  // Build complete field list
-  // ------------------------------------
-
-  const requestedFields: string[] = Array.isArray(
-    plan?.fields_to_extract
-  )
-    ? plan.fields_to_extract
-    : [];
-
   const extractedFields: ExtractedField[] =
     result?.extracted_fields ?? [];
 
   const missingFields: string[] =
     result?.missing_fields ?? [];
 
-  const allFieldNames = [
-    ...requestedFields,
-    ...extractedFields.map(
-      (field: ExtractedField) => field.field_path
-    ),
-    ...missingFields,
-  ];
-
-  const tableFields = allFieldNames.length
-    ? allFieldNames.filter(
-        (field, index, arr) =>
-          arr.findIndex(
-            (item) =>
-              normalized(item) === normalized(field)
-          ) === index
-      )
-    : DEFAULT_MORTGAGE_FIELDS;
-
   // ------------------------------------
-  // Build table rows
-  // ------------------------------------
-
-  const rows = tableFields.map((fieldName) => {
-    const extracted = extractedFields.find(
-      (field: ExtractedField) =>
-        normalized(field.field_path) ===
-          normalized(fieldName) &&
-        field.value !== null &&
-        field.value !== undefined &&
-        String(field.value).trim() !== ""
-    );
-
-    const isMissing = missingFields.some(
-      (field: string) =>
-        normalized(field) === normalized(fieldName)
-    );
-
-    return {
-      fieldName,
-      value: extracted?.value ?? "—",
-      documentType: extracted?.document_type ?? "—",
-      page: extracted?.page ?? "—",
-      confidence:
-        typeof extracted?.confidence === "number"
-          ? `${(extracted.confidence * 100).toFixed(0)}%`
-          : "—",
-      sourceText: extracted?.source_text,
-      status: extracted ? "Extracted" : "Missing",
-    };
-  });
-
-  // ------------------------------------
-  // Copy message
+  // Copy Message
   // ------------------------------------
 
   const copyMessage = async () => {
@@ -263,19 +272,25 @@ export default function ChatMessage({
 
       setCopied(true);
 
-      setTimeout(() => setCopied(false), 1500);
+      window.setTimeout(() => setCopied(false), 1500);
     } catch (error) {
       console.error("Copy failed:", error);
     }
   };
 
   // ------------------------------------
-  // Metadata helpers
+  // Response Metadata
   // ------------------------------------
 
   const model =
     metadata?.model ??
     output?.model;
+
+  const agentName =
+    message.agent ??
+    metadata?.agent_name ??
+    output?.agent_name ??
+    "Mortgage AI";
 
   const fileName =
     metadata?.file_name ??
@@ -317,15 +332,12 @@ export default function ChatMessage({
       </div>
 
       <div className="message-content">
+
         {/* HEADER */}
 
         <div className="message-header">
           <strong>
-            {isUser
-              ? "You"
-              : message.agent ||
-                metadata?.agent_name ||
-                "Mortgage AI"}
+            {isUser ? "You" : agentName}
           </strong>
 
           {!isUser && <span>Agent Response</span>}
@@ -335,139 +347,160 @@ export default function ChatMessage({
 
         <div className="message-text">
           {structured ? (
-            <div className="space-y-6 text-sm leading-6">
+            <div className="space-y-5 text-sm leading-6">
 
-              {/* -------------------------------- */}
               {/* EXTRACTION PLAN */}
-              {/* -------------------------------- */}
 
-              <section>
-                <div className="flex items-center gap-2 mb-3">
-                  <FileText size={18} />
+              {plan?.task && (
+                <section className="rounded-lg border p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <FileText size={18} />
 
-                  <h3 className="font-semibold text-base">
-                    Extraction Plan
-                  </h3>
-                </div>
+                    <h3 className="font-semibold text-base">
+                      Extraction Plan
+                    </h3>
+                  </div>
 
-                {plan?.task && (
                   <div className="mb-3">
-                    <h4 className="font-semibold mb-1">
+                    <p className="font-semibold mb-1">
                       Task
-                    </h4>
+                    </p>
 
                     <p>{plan.task}</p>
                   </div>
-                )}
 
-                {Array.isArray(documentTypes) &&
-                  documentTypes.length > 0 && (
-                    <div className="mb-3">
-                      <h4 className="font-semibold mb-2">
-                        Document Types
-                      </h4>
+                  {Array.isArray(documentTypes) &&
+                    documentTypes.length > 0 && (
+                      <div className="mb-3">
+                        <p className="font-semibold mb-1">
+                          Document Types
+                        </p>
 
-                      <div className="flex flex-wrap gap-2">
-                        {documentTypes.map(
-                          (type: string, index: number) => (
-                            <span
-                              key={index}
-                              className="px-3 py-1 rounded-full border text-xs"
-                            >
-                              {type}
-                            </span>
-                          )
-                        )}
+                        <p>
+                          {documentTypes.join(", ")}
+                        </p>
                       </div>
+                    )}
+
+                  {schemaName && (
+                    <div className="mb-3">
+                      <p className="font-semibold mb-1">
+                        Schema
+                      </p>
+
+                      <p>{schemaName}</p>
                     </div>
                   )}
 
-                {schemaName && (
-                  <div className="mb-3">
-                    <h4 className="font-semibold">
-                      Schema
-                    </h4>
+                  {Array.isArray(plan.fields_to_extract) &&
+                    plan.fields_to_extract.length > 0 && (
+                      <div className="mb-3">
+                        <p className="font-semibold mb-1">
+                          Fields to Extract
+                        </p>
 
-                    <p>{schemaName}</p>
+                        <p>
+                          {plan.fields_to_extract.join(", ")}
+                        </p>
+                      </div>
+                    )}
+
+                  {Array.isArray(plan.instructions) &&
+                    plan.instructions.length > 0 && (
+                      <div className="mt-3">
+                        <p className="font-semibold mb-2">
+                          Instructions
+                        </p>
+
+                        <div className="space-y-2">
+                          {plan.instructions.map(
+                            (
+                              instruction: string,
+                              index: number
+                            ) => (
+                              <p key={index}>
+                                {instruction}
+                              </p>
+                            )
+                          )}
+                        </div>
+                      </div>
+                    )}
+                </section>
+              )}
+
+              {/* EXTRACTED VALUES */}
+
+              {extractedFields.length > 0 && (
+                <section>
+                  <div className="flex items-center gap-2 mb-3">
+                    <TableIcon size={18} />
+
+                    <h3 className="font-semibold text-base">
+                      Actual Extracted Mortgage Values
+                    </h3>
                   </div>
-                )}
-              </section>
 
-              {/* -------------------------------- */}
-              {/* EXTRACTED MORTGAGE FIELDS */}
-              {/* -------------------------------- */}
-
-              <section className="border-t pt-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <TableIcon size={18} />
-
-                  <h3 className="font-semibold text-base">
-                    Extracted Mortgage Fields
-                  </h3>
-                </div>
-
-                {rows.length > 0 ? (
                   <div className="overflow-x-auto rounded-lg border">
-                    <table className="w-full border-collapse text-left text-xs">
+                    <table className="w-full border-collapse text-left text-sm">
                       <thead>
                         <tr className="border-b bg-gray-100 dark:bg-gray-800">
-                          <th className="p-3">
-                            Field
-                          </th>
-
-                          <th className="p-3">
-                            Details
-                          </th>
-
-                          <th className="p-3">
-                            Status
-                          </th>
+                          <th className="p-3">Field</th>
+                          <th className="p-3">Value</th>
+                          <th className="p-3">Status</th>
                         </tr>
                       </thead>
 
                       <tbody>
-                        {rows.map((row, index) => (
-                          <tr
-                            key={`${row.fieldName}-${index}`}
-                            className="border-b last:border-b-0 align-top"
-                          >
-                            <td className="p-3 font-medium">
-                              {row.fieldName}
-                            </td>
+                        {extractedFields.map(
+                          (field, index) => {
+                            const hasValue =
+                              field.value !== null &&
+                              field.value !== undefined &&
+                              String(field.value).trim() !== "" &&
+                              String(field.value).toLowerCase() !==
+                                "not supplied";
 
-                            <td className="p-3 break-words">
-                              {row.value}
-                            </td>
-
-                            <td className="p-3">
-                              <span
-                                className={
-                                  row.status === "Extracted"
-                                    ? "text-green-600 font-medium"
-                                    : "text-red-500 font-medium"
-                                }
+                            return (
+                              <tr
+                                key={`${field.field_path}-${index}`}
+                                className="border-b last:border-b-0 align-top"
                               >
-                                {row.status}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
+                                <td className="p-3 font-medium">
+                                  {field.field_path}
+                                </td>
+
+                                <td className="p-3 break-words">
+                                  {field.value ?? "—"}
+                                </td>
+
+                                <td className="p-3">
+                                  {hasValue ? (
+                                    <span className="text-green-600 font-medium">
+                                      Extracted
+                                    </span>
+                                  ) : (
+                                    <span className="text-red-500 font-medium">
+                                      Missing
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          }
+                        )}
                       </tbody>
                     </table>
                   </div>
-                ) : (
-                  <p className="opacity-70">
-                    No extraction fields available.
-                  </p>
-                )}
-              </section>
+                </section>
+              )}
 
-              {/* -------------------------------- */}
               {/* SOURCE EVIDENCE */}
-              {/* -------------------------------- */}
 
-              {rows.some((row) => row.sourceText) && (
-                <section className="border-t pt-4">
+              {extractedFields.some(
+                (field) => field.source_text
+              ) && (
+                <section>
                   <div className="flex items-center gap-2 mb-3">
                     <FileSearch size={18} />
 
@@ -480,38 +513,41 @@ export default function ChatMessage({
                     <table className="w-full border-collapse text-left text-xs">
                       <thead>
                         <tr className="border-b bg-gray-100 dark:bg-gray-800">
-                          <th className="p-3">
-                            Field
-                          </th>
-
-                          <th className="p-3">
-                            Source Evidence
-                          </th>
-
-                          <th className="p-3">
-                            Page
-                          </th>
+                          <th className="p-3">Field</th>
+                          <th className="p-3">Source Text</th>
+                          <th className="p-3">Page</th>
+                          <th className="p-3">Confidence</th>
                         </tr>
                       </thead>
 
                       <tbody>
-                        {rows
-                          .filter((row) => row.sourceText)
-                          .map((row, index) => (
+                        {extractedFields
+                          .filter(
+                            (field) => field.source_text
+                          )
+                          .map((field, index) => (
                             <tr
                               key={index}
                               className="border-b last:border-b-0 align-top"
                             >
                               <td className="p-3 font-medium">
-                                {row.fieldName}
+                                {field.field_path}
                               </td>
 
                               <td className="p-3 break-words">
-                                {row.sourceText}
+                                {field.source_text}
                               </td>
 
                               <td className="p-3">
-                                {row.page}
+                                {field.page ?? "—"}
+                              </td>
+
+                              <td className="p-3">
+                                {typeof field.confidence === "number"
+                                  ? `${(
+                                      field.confidence * 100
+                                    ).toFixed(0)}%`
+                                  : "—"}
                               </td>
                             </tr>
                           ))}
@@ -521,13 +557,29 @@ export default function ChatMessage({
                 </section>
               )}
 
-              {/* -------------------------------- */}
-              {/* WARNINGS */}
-              {/* -------------------------------- */}
+              {/* MISSING FIELDS */}
 
-              {Array.isArray(result?.warnings) &&
+              {missingFields.length > 0 && (
+                <section className="rounded-lg border p-3">
+                  <h3 className="font-semibold mb-2">
+                    Missing Fields
+                  </h3>
+
+                  <ul className="list-disc pl-5 space-y-1">
+                    {missingFields.map(
+                      (field: string, index: number) => (
+                        <li key={index}>{field}</li>
+                      )
+                    )}
+                  </ul>
+                </section>
+              )}
+
+              {/* WARNINGS */}
+
+              {result?.warnings &&
                 result.warnings.length > 0 && (
-                  <section className="border-t pt-4">
+                  <section className="rounded-lg border border-amber-300 p-3">
                     <div className="flex items-center gap-2 mb-3">
                       <AlertTriangle size={17} />
 
@@ -536,28 +588,24 @@ export default function ChatMessage({
                       </h3>
                     </div>
 
-                    <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3">
-                      <ul className="list-disc pl-5 space-y-1">
-                        {result.warnings.map(
-                          (warning: string, index: number) => (
-                            <li key={index}>
-                              {warning}
-                            </li>
-                          )
-                        )}
-                      </ul>
-                    </div>
+                    <ul className="list-disc pl-5 space-y-1">
+                      {result.warnings.map(
+                        (
+                          warning: string,
+                          index: number
+                        ) => (
+                          <li key={index}>
+                            {warning}
+                          </li>
+                        )
+                      )}
+                    </ul>
                   </section>
                 )}
 
-              {/* -------------------------------- */}
               {/* RESPONSE DETAILS */}
-              {/* -------------------------------- */}
 
-              {(model ||
-                fileName ||
-                status ||
-                documentId) && (
+              {(model || fileName || status || documentId) && (
                 <section className="border-t pt-4">
                   <div className="flex items-center gap-2 mb-3">
                     <FileText size={18} />
@@ -567,68 +615,97 @@ export default function ChatMessage({
                     </h3>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-2">
                     {model && (
-                      <div className="rounded-lg border p-3">
-                        <span className="font-medium">
-                          Model
-                        </span>
-
-                        <p className="opacity-70 break-words">
-                          {model}
-                        </p>
-                      </div>
+                      <p className="break-words">
+                        <strong>Model:</strong> {model}
+                      </p>
                     )}
 
                     {fileName && (
-                      <div className="rounded-lg border p-3">
-                        <span className="font-medium">
-                          File
-                        </span>
-
-                        <p className="opacity-70 break-words">
-                          {fileName}
-                        </p>
-                      </div>
+                      <p className="break-words">
+                        <strong>File:</strong> {fileName}
+                      </p>
                     )}
 
                     {status && (
-                      <div className="rounded-lg border p-3">
-                        <span className="font-medium">
-                          Status
-                        </span>
-
-                        <p className="opacity-70">
-                          {status}
-                        </p>
-                      </div>
+                      <p>
+                        <strong>Status:</strong> {status}
+                      </p>
                     )}
 
                     {documentId && (
-                      <div className="rounded-lg border p-3">
-                        <span className="font-medium">
-                          Document ID
-                        </span>
-
-                        <p className="opacity-70 break-all">
-                          {documentId}
-                        </p>
-                      </div>
+                      <p className="break-all">
+                        <strong>Document ID:</strong> {documentId}
+                      </p>
                     )}
                   </div>
                 </section>
               )}
+
             </div>
           ) : (
+            /* READABLE FALLBACK FOR OTHER RESPONSES */
+
             <div className="whitespace-pre-wrap break-words text-sm leading-6">
-              {message.content}
+              {(() => {
+                const parsedFallback = parseJSON(message.content);
+
+                if (
+                  parsedFallback &&
+                  typeof parsedFallback === "object"
+                ) {
+                  const nestedAnswer = parseJSON(
+                    parsedFallback.answer
+                  );
+
+                  const readableData =
+                    nestedAnswer ?? parsedFallback;
+
+                  return (
+                    <div className="space-y-3">
+                      {renderReadableValue(readableData)}
+
+                      {parsedFallback.model && (
+                        <p>
+                          <strong>Model:</strong>{" "}
+                          {parsedFallback.model}
+                        </p>
+                      )}
+
+                      {parsedFallback.agent_name && (
+                        <p>
+                          <strong>Agent:</strong>{" "}
+                          {parsedFallback.agent_name}
+                        </p>
+                      )}
+
+                      {(parsedFallback.file_name ||
+                        parsedFallback.filename) && (
+                        <p>
+                          <strong>File:</strong>{" "}
+                          {parsedFallback.file_name ??
+                            parsedFallback.filename}
+                        </p>
+                      )}
+
+                      {parsedFallback.status && (
+                        <p>
+                          <strong>Status:</strong>{" "}
+                          {parsedFallback.status}
+                        </p>
+                      )}
+                    </div>
+                  );
+                }
+
+                return message.content;
+              })()}
             </div>
           )}
         </div>
 
-        {/* -------------------------------- */}
         {/* MESSAGE ACTIONS */}
-        {/* -------------------------------- */}
 
         {!isUser && (
           <div className="message-actions">
@@ -645,12 +722,12 @@ export default function ChatMessage({
             {Boolean(message.evidence) && (
               <button>
                 <FileSearch size={14} />
-
                 View evidence
               </button>
             )}
           </div>
         )}
+
       </div>
     </div>
   );
