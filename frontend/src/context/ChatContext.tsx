@@ -59,6 +59,29 @@ export interface Conversation {
   updatedAt: string;
 }
 
+export interface AuditFinding {
+  field_path: string;
+  status: string;
+  extracted_value?: string | null;
+  document_value?: string | null;
+  page?: number | string | null;
+  explanation?: string | null;
+}
+
+export interface AuditResultData {
+  total_checks?: number;
+  passed?: number;
+  exceptions?: number;
+  missing_evidence?: number;
+  verdict?: string;
+  findings?: AuditFinding[];
+  download_url?: string | null;
+  file_format?: string | null;
+  export_filename?: string | null;
+  available_downloads?: Record<string, string> | null;
+  updated_at?: string;
+}
+
 interface ChatContextType {
   messages: ChatMessage[];
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
@@ -77,6 +100,9 @@ interface ChatContextType {
   saveExtractedFields: (
     fields: ExtractedField[]
   ) => Promise<void>;
+
+  auditResult: AuditResultData | null;
+  setAuditResult: (result: AuditResultData | null) => void;
 
   selectedFile: File | null;
   setSelectedFile: (file: File | null) => void;
@@ -162,6 +188,7 @@ export function ChatProvider({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string>("orchestrator");
   const [inputPrompt, setInputPrompt] = useState<string>("");
+  const [auditResult, setAuditResult] = useState<AuditResultData | null>(null);
 
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -220,6 +247,15 @@ export function ChatProvider({
       setExtractedFields(
         Array.isArray(result.fields) ? result.fields : []
       );
+
+      if (result.audit_result) {
+        setAuditResult({
+          ...result.audit_result,
+          download_url: result.download_url || result.audit_result.download_url || null,
+          file_format: result.download_format || result.audit_result.file_format || "excel",
+          available_downloads: result.available_downloads || result.audit_result.available_downloads || {},
+        });
+      }
     } catch (error) {
       console.error("LOAD EXTRACTED DATA ERROR:", error);
 
@@ -418,6 +454,7 @@ export function ChatProvider({
     setCurrentDocumentState(null);
     setExtractedFields([]);
     setExtractedDataError(null);
+    setAuditResult(null);
     setSelectedFile(null);
     setInputPrompt("");
     setActiveConversationId(null);
@@ -476,6 +513,9 @@ export function ChatProvider({
     setLoading,
 
     clearChat,
+
+    auditResult,
+    setAuditResult,
 
     conversations,
     activeConversationId,

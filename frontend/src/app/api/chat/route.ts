@@ -30,14 +30,15 @@ async function callFastAPI(
   message: string,
   fileName: string,
   pdfBuffer: Buffer,
-  extractionPlan?: unknown
+  extractionPlan?: unknown,
+  extraData?: unknown
 ) {
   const formData = new FormData();
 
   formData.append("msg", message);
   formData.append("agent", agentName);
 
-  if (extractionPlan !== undefined) {
+  if (extractionPlan !== undefined && extractionPlan !== null) {
     const planString =
       typeof extractionPlan === "string"
         ? extractionPlan
@@ -45,6 +46,16 @@ async function callFastAPI(
 
     formData.append("extraction_plan", planString);
     formData.append("plan", planString);
+  }
+
+  if (extraData !== undefined && extraData !== null) {
+    const dataString =
+      typeof extraData === "string"
+        ? extraData
+        : JSON.stringify(extraData);
+
+    formData.append("extracted_data", dataString);
+    formData.append("data", dataString);
   }
 
   formData.append(
@@ -564,16 +575,66 @@ export async function POST(request: NextRequest) {
     if (selectedAgent === "auditor") {
       console.log("Running Auditor Agent...");
 
+      const clientExtractedData =
+        body.extracted_data ??
+        body.extra_data?.extracted_data ??
+        null;
+
+      let dataToAudit = clientExtractedData;
+
+      if (!dataToAudit && document.extracted_data) {
+        const savedExt = document.extracted_data as any;
+        if (Array.isArray(savedExt?.fields) && savedExt.fields.length > 0) {
+          dataToAudit = { extracted_fields: savedExt.fields };
+        } else if (savedExt?.extraction_result?.extracted_fields) {
+          dataToAudit = savedExt.extraction_result;
+        } else if (savedExt?.extraction_result) {
+          dataToAudit = savedExt.extraction_result;
+        } else {
+          dataToAudit = savedExt;
+        }
+      }
+
       const auditorResponse = await callFastAPI(
         "auditor",
         userMessage,
         document.filename,
-        pdfBuffer
+        pdfBuffer,
+        undefined,
+        dataToAudit
       );
 
       const auditorOutput = getAgentOutput(
         auditorResponse
       );
+
+      // Persist audit findings and download URLs to document.extracted_data in PostgreSQL
+      try {
+        const currentExtracted = (document.extracted_data as any) || {};
+        const updatedExtractedData = {
+          ...currentExtracted,
+          audit_result: auditorOutput,
+          download_url:
+            auditorResponse.download_url ?? auditorOutput?.download_url ?? null,
+          download_format:
+            auditorResponse.download_format ??
+            auditorResponse.file_format ??
+            auditorOutput?.file_format ??
+            null,
+          available_downloads:
+            auditorResponse.available_downloads ??
+            auditorOutput?.available_downloads ??
+            {},
+          updated_at: new Date().toISOString(),
+        };
+
+        await prisma.documents.update({
+          where: { id: String(documentId) },
+          data: { extracted_data: updatedExtractedData },
+        });
+      } catch (dbErr) {
+        console.warn("Failed to persist audit_result to documents:", dbErr);
+      }
 
       return NextResponse.json({
         success: true,
@@ -591,9 +652,17 @@ export async function POST(request: NextRequest) {
         status:
           auditorResponse.status ??
           "success",
-        download_url: auditorResponse.download_url ?? null,
-        download_format: auditorResponse.download_format ?? auditorResponse.file_format ?? null,
-        available_downloads: auditorResponse.available_downloads ?? {},
+        download_url:
+          auditorResponse.download_url ?? auditorOutput?.download_url ?? null,
+        download_format:
+          auditorResponse.download_format ??
+          auditorResponse.file_format ??
+          auditorOutput?.file_format ??
+          null,
+        available_downloads:
+          auditorResponse.available_downloads ??
+          auditorOutput?.available_downloads ??
+          {},
         document_id: documentId,
         conversation_id: conversationId,
         selected_agent: "auditor",

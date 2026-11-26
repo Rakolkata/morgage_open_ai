@@ -10,6 +10,7 @@ import {
   FileText,
   Table as TableIcon,
   Download,
+  ClipboardCheck,
 } from "lucide-react";
 
 import { useState } from "react";
@@ -62,6 +63,61 @@ function formatLabel(key: string): string {
   return key
     .replace(/_/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+// Convert markdown links [title](url) or URLs into clickable links
+function renderTextWithLinks(text: string): ReactNode {
+  if (!text) return null;
+
+  const linkRegex = /\[([^\]]+)\]\(([^)]+)\)|(https?:\/\/[^\s)]+|\/api\/v1\/download\/[^\s)]+|\/downloads\/[^\s)]+)/g;
+  const elements: ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = linkRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      elements.push(text.substring(lastIndex, match.index));
+    }
+
+    if (match[1] && match[2]) {
+      const title = match[1];
+      const url = match[2];
+      elements.push(
+        <a
+          key={match.index}
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 font-semibold text-blue-600 hover:text-blue-800 underline underline-offset-2"
+        >
+          {title}
+          <Download size={13} className="inline ml-0.5" />
+        </a>
+      );
+    } else if (match[3]) {
+      const url = match[3];
+      elements.push(
+        <a
+          key={match.index}
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 font-semibold text-blue-600 hover:text-blue-800 underline underline-offset-2"
+        >
+          {url}
+          <Download size={13} className="inline ml-0.5" />
+        </a>
+      );
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    elements.push(text.substring(lastIndex));
+  }
+
+  return elements.length > 0 ? elements : text;
 }
 
 // Recursively render JSON as readable text
@@ -134,7 +190,7 @@ function renderReadableValue(value: any, key?: string): ReactNode {
         <strong>{formatLabel(key)}: </strong>
       )}
 
-      {String(value)}
+      {typeof value === "string" ? renderTextWithLinks(value) : String(value)}
     </p>
   );
 }
@@ -225,7 +281,43 @@ function getStructuredResponse(content: string) {
     (normalizedResult.missing_fields?.length ?? 0) > 0 ||
     (normalizedResult.warnings?.length ?? 0) > 0;
 
-  if (!hasPlan && !hasResult) {
+  const isAudit =
+    Boolean(output?.findings) ||
+    typeof output?.total_checks === "number" ||
+    Boolean(output?.verdict) ||
+    parsed?.agent_name === "Auditor Agent" ||
+    output?.agent_name === "Auditor Agent";
+
+  const audit = isAudit
+    ? {
+        total_checks:
+          typeof output?.total_checks === "number"
+            ? output.total_checks
+            : Array.isArray(output?.findings)
+            ? output.findings.length
+            : undefined,
+        passed:
+          typeof output?.passed === "number" ? output.passed : undefined,
+        exceptions:
+          typeof output?.exceptions === "number" ? output.exceptions : undefined,
+        missing_evidence:
+          typeof output?.missing_evidence === "number"
+            ? output.missing_evidence
+            : undefined,
+        verdict:
+          typeof output?.verdict === "string" ? output.verdict : undefined,
+        findings: Array.isArray(output?.findings) ? output.findings : [],
+        file_format:
+          output?.file_format ?? parsed?.download_format ?? "excel",
+        download_url:
+          output?.download_url ?? parsed?.download_url ?? null,
+        export_filename: output?.export_filename ?? null,
+        available_downloads:
+          (output?.available_downloads || parsed?.available_downloads) ?? {},
+      }
+    : null;
+
+  if (!hasPlan && !hasResult && !isAudit) {
     return null;
   }
 
@@ -234,6 +326,8 @@ function getStructuredResponse(content: string) {
     result: normalizedResult,
     metadata: parsed,
     output,
+    isAudit,
+    audit,
   };
 }
 
@@ -256,6 +350,7 @@ export default function ChatMessage({
   const result = structured?.result;
   const metadata = structured?.metadata;
   const output = structured?.output;
+  const audit = structured?.audit;
 
   const extractedFields: ExtractedField[] =
     result?.extracted_fields ?? [];
@@ -363,6 +458,94 @@ export default function ChatMessage({
         <div className="message-text">
           {structured ? (
             <div className="space-y-5 text-sm leading-6">
+
+              {/* AUDIT & VERIFICATION REPORT (Simple Chat Format) */}
+              {audit && (
+                <div className="chat-plan-container">
+                  <h3 className="chat-plan-heading">
+                    <ClipboardCheck size={16} />
+                    Audit &amp; Verification Report
+                  </h3>
+
+                  {audit.verdict && (
+                    <p className="chat-plan-task">
+                      <strong>Verdict:</strong>{" "}
+                      <span className="chat-plan-code">
+                        {audit.verdict}
+                      </span>
+                    </p>
+                  )}
+
+                  <div className="chat-plan-group">
+                    <p className="chat-plan-group-title">
+                      <strong>Verification Summary:</strong>
+                    </p>
+                    <ul className="chat-plan-list">
+                      <li><strong>Total Checks:</strong> {audit.total_checks ?? audit.findings?.length ?? 0}</li>
+                      <li><strong>Passed:</strong> {audit.passed ?? 0}</li>
+                      <li><strong>Exceptions:</strong> {audit.exceptions ?? 0}</li>
+                      <li><strong>Missing Evidence:</strong> {audit.missing_evidence ?? 0}</li>
+                    </ul>
+                  </div>
+
+                  {(downloadUrl || availableDownloads) && (
+                    <div className="chat-plan-group">
+                      <p className="chat-plan-group-title">
+                        <strong>Download Reports:</strong>
+                      </p>
+                      <div className="chat-audit-links">
+                        {downloadUrl && (
+                          <a
+                            href={downloadUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="chat-audit-link-primary"
+                          >
+                            <Download size={13} />
+                            Download {String(downloadFormat).toUpperCase()} Report
+                          </a>
+                        )}
+                        {availableDownloads &&
+                          typeof availableDownloads === "object" &&
+                          Object.entries(availableDownloads).map(
+                            ([fmt, link]) =>
+                              link !== downloadUrl && (
+                                <a
+                                  key={fmt}
+                                  href={String(link)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="chat-audit-link-secondary"
+                                >
+                                  <Download size={12} />
+                                  {fmt.toUpperCase()}
+                                </a>
+                              )
+                          )}
+                      </div>
+                    </div>
+                  )}
+
+                  {Array.isArray(audit.findings) &&
+                    audit.findings.length > 0 &&
+                    (audit.exceptions ?? 0) > 0 && (
+                      <div className="chat-plan-group">
+                        <p className="chat-plan-group-title">
+                          <strong>Exceptions &amp; Discrepancies:</strong>
+                        </p>
+                        <ul className="chat-plan-list">
+                          {audit.findings
+                            .filter((f: any) => String(f.status).toUpperCase() !== "MATCH")
+                            .map((f: any, idx: number) => (
+                              <li key={idx}>
+                                <strong>{f.field_path}:</strong> Extracted &quot;{f.extracted_value ?? "—"}&quot; vs Document &quot;{f.document_value ?? "—"}&quot;{f.page ? ` (Page ${f.page})` : ""}{f.explanation ? ` — ${f.explanation}` : ""}
+                              </li>
+                            ))}
+                        </ul>
+                      </div>
+                    )}
+                </div>
+              )}
 
               {/* EXTRACTION PLAN (Simple Chat Format) */}
 
@@ -601,28 +784,23 @@ export default function ChatMessage({
                   </section>
                 )}
 
-              {/* DOWNLOAD SECTION */}
-              {(downloadUrl || availableDownloads) && (
-                <section className="rounded-lg border border-blue-200 bg-blue-50/60 p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Download size={18} className="text-blue-600" />
-                    <h3 className="font-semibold text-base text-blue-900">
-                      Download Audited Data
-                    </h3>
+              {/* DOWNLOAD SECTION (Non-audit responses) */}
+              {!audit && (downloadUrl || availableDownloads) && (
+                <div className="chat-audit-download-box">
+                  <div className="chat-audit-download-title">
+                    <Download size={14} />
+                    <span>Download Extracted Data</span>
                   </div>
-                  <p className="text-xs text-blue-800 mb-3">
-                    Verified and audited data export ready for download:
-                  </p>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="chat-audit-btn-group">
                     {downloadUrl && (
                       <a
                         href={downloadUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition"
+                        className="chat-audit-btn primary"
                       >
                         <Download size={13} />
-                        Download {String(downloadFormat).toUpperCase()}
+                        <span>Download {String(downloadFormat).toUpperCase()}</span>
                       </a>
                     )}
                     {availableDownloads &&
@@ -634,52 +812,45 @@ export default function ChatMessage({
                               href={String(urlStr)}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-white border border-blue-300 text-blue-900 text-xs font-medium hover:bg-blue-50 transition"
+                              className="chat-audit-btn secondary"
                             >
-                              <Download size={13} />
-                              {formatKey.toUpperCase()}
+                              <Download size={12} />
+                              <span>{formatKey.toUpperCase()}</span>
                             </a>
                           )
                       )}
                   </div>
-                </section>
+                </div>
               )}
 
               {/* RESPONSE DETAILS */}
-
               {(model || fileName || status || documentId) && (
-                <section className="border-t border-slate-200 pt-3 mt-3 text-xs text-slate-500">
-                  <div className="flex items-center gap-2 mb-2 text-slate-700 font-medium">
-                    <FileText size={15} />
-                    <span>Execution Details</span>
+                <div className="chat-execution-details">
+                  <div className="chat-execution-details-title">
+                    <FileText size={13} />
+                    <span>Details:</span>
                   </div>
-
-                  <div className="flex flex-wrap gap-x-5 gap-y-1 text-slate-600">
-                    {model && (
-                      <p className="m-0">
-                        <strong>Model:</strong> {model}
-                      </p>
-                    )}
-
-                    {fileName && (
-                      <p className="m-0">
-                        <strong>File:</strong> {fileName}
-                      </p>
-                    )}
-
-                    {status && (
-                      <p className="m-0">
-                        <strong>Status:</strong> {status}
-                      </p>
-                    )}
-
-                    {documentId && (
-                      <p className="m-0">
-                        <strong>Doc ID:</strong> {String(documentId).slice(0, 8)}...
-                      </p>
-                    )}
-                  </div>
-                </section>
+                  {model && (
+                    <span className="chat-execution-details-item">
+                      <strong>Model:</strong> {model}
+                    </span>
+                  )}
+                  {fileName && (
+                    <span className="chat-execution-details-item">
+                      <strong>File:</strong> {fileName}
+                    </span>
+                  )}
+                  {status && (
+                    <span className="chat-execution-details-item">
+                      <strong>Status:</strong> {status}
+                    </span>
+                  )}
+                  {documentId && (
+                    <span className="chat-execution-details-item">
+                      <strong>Doc ID:</strong> {String(documentId).slice(0, 8)}...
+                    </span>
+                  )}
+                </div>
               )}
 
             </div>
@@ -792,7 +963,7 @@ export default function ChatMessage({
                   );
                 }
 
-                return message.content;
+                return renderTextWithLinks(message.content);
               })()}
             </div>
           )}

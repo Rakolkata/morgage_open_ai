@@ -131,6 +131,8 @@ export default function useChat() {
     setSelectedFile,
     selectedAgent,
     refreshExtractedData,
+    extractedFields,
+    setAuditResult,
   } = useChatContext();
 
   const sendMessage = async (message: string): Promise<void> => {
@@ -288,11 +290,29 @@ export default function useChat() {
         },
       ]);
 
+      let extraData: Record<string, unknown> | undefined = undefined;
+
+      if (normalizedAgent === "auditor" && extractedFields.length > 0) {
+        extraData = {
+          extracted_data: {
+            extracted_fields: extractedFields.map((f) => ({
+              field_path: f.field_path,
+              value: f.value,
+              document_type: f.document_type || "LE",
+              page: f.page || 1,
+              source_text: f.source_text || "",
+              confidence: f.confidence || 0.95,
+            })),
+          },
+        };
+      }
+
       const response = (await sendChatMessage(
         text,
         documentId,
         history,
-        normalizedAgent
+        normalizedAgent,
+        extraData
       )) as ChatApiResponse;
 
       console.log(`${normalizedAgent.toUpperCase()} RESPONSE:`, response);
@@ -303,6 +323,52 @@ export default function useChat() {
             ? response.error
             : `${agentDisplayName} failed to respond.`
         );
+      }
+
+      // If Auditor Agent was executed, store the structured audit output
+      if (normalizedAgent === "auditor") {
+        const auditOutput = (response.agent_output || {}) as Record<string, unknown>;
+        const auditData = {
+          total_checks:
+            typeof auditOutput.total_checks === "number"
+              ? auditOutput.total_checks
+              : undefined,
+          passed:
+            typeof auditOutput.passed === "number"
+              ? auditOutput.passed
+              : undefined,
+          exceptions:
+            typeof auditOutput.exceptions === "number"
+              ? auditOutput.exceptions
+              : undefined,
+          missing_evidence:
+            typeof auditOutput.missing_evidence === "number"
+              ? auditOutput.missing_evidence
+              : undefined,
+          verdict:
+            typeof auditOutput.verdict === "string"
+              ? auditOutput.verdict
+              : undefined,
+          findings: Array.isArray(auditOutput.findings)
+            ? (auditOutput.findings as any[])
+            : undefined,
+          download_url:
+            response.download_url ||
+            (auditOutput.download_url as string) ||
+            null,
+          file_format:
+            response.download_format ||
+            (auditOutput.file_format as string) ||
+            "excel",
+          export_filename:
+            (auditOutput.export_filename as string) || null,
+          available_downloads:
+            response.available_downloads ||
+            (auditOutput.available_downloads as Record<string, string>) ||
+            {},
+        };
+
+        setAuditResult(auditData);
       }
 
       // Display the actual Agent API response, replacing the pending status message

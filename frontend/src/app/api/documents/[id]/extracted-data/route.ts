@@ -53,6 +53,10 @@ export async function GET(
       extraction_plan: savedData?.extraction_plan ?? null,
       missing_fields: savedData?.missing_fields ?? [],
       warnings: savedData?.warnings ?? [],
+      audit_result: savedData?.audit_result ?? null,
+      download_url: savedData?.download_url ?? null,
+      download_format: savedData?.download_format ?? null,
+      available_downloads: savedData?.available_downloads ?? {},
       updated_at: savedData?.updated_at ?? null,
     });
   } catch (error) {

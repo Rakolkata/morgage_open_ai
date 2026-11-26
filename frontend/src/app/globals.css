@@ -2000,3 +2000,366 @@ a {
     padding: 24px 20px;
   }
 }
+
+/* =========================================
+   AUDIT & EXPORT REPORTS PANEL STYLES
+========================================= */
+
+.audit-verdict-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.audit-verdict-pill.passed {
+  background: #dcfce7;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+}
+
+.audit-verdict-pill.flagged {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+
+.audit-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+
+@media (max-width: 768px) {
+  .audit-metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.audit-metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.audit-metric-card.metric-passed {
+  border-left: 4px solid #10b981;
+}
+
+.audit-metric-card.metric-flagged {
+  border-left: 4px solid #f59e0b;
+}
+
+.metric-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--secondary);
+  letter-spacing: 0.025em;
+}
+
+.metric-val {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.metric-sub {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* AUDIT DOWNLOAD BANNER */
+
+.audit-download-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  margin-bottom: 20px;
+}
+
+.audit-download-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: #dcfce7;
+  border-radius: 8px;
+}
+
+.audit-download-banner strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #14532d;
+}
+
+.audit-download-banner p {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: #166534;
+}
+
+.btn-download-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 16px;
+  background: #16a34a;
+  color: #ffffff;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+
+.btn-download-primary:hover {
+  background: #15803d;
+}
+
+/* FINDINGS TABLE GRID */
+
+.audit-grid-header,
+.audit-grid-row {
+  display: grid;
+  grid-template-columns: 1.4fr 0.9fr 1.3fr 1.3fr 0.6fr 2fr !important;
+  min-width: 780px !important;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.status-pill.match {
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+}
+
+.status-pill.mismatch {
+  background: #fffbeb;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+
+/* EXPORT CARDS GRID */
+
+.export-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+
+@media (max-width: 800px) {
+  .export-cards-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.export-card {
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.export-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.08);
+}
+
+.export-card-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.export-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+}
+
+.export-card-icon.excel {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.export-card-icon.json {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.export-card-icon.xml {
+  background: #fdf4ff;
+  color: #a21caf;
+}
+
+.export-card-icon.csv {
+  background: #f8fafc;
+  color: #475569;
+}
+
+.export-card-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.export-card-header span {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.export-card-desc {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--secondary);
+  margin: 0 0 16px;
+  flex-grow: 1;
+}
+
+.export-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 14px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.btn-card-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 16px;
+  background: var(--primary);
+  color: #ffffff;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+
+.btn-card-download:hover {
+  background: var(--primary-hover);
+}
+
+.export-status-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  background: #f1f5f9;
+  color: #64748b;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* =========================================
+   CHAT AUDIT REPORT & DETAILS (Simple Chat Format)
+========================================= */
+
+.chat-audit-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.chat-audit-link-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #16a34a;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color 0.15s ease;
+}
+
+.chat-audit-link-primary:hover {
+  color: #15803d;
+}
+
+.chat-audit-link-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #2563eb;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color 0.15s ease;
+}
+
+.chat-audit-link-secondary:hover {
+  color: #1d4ed8;
+}
+
+/* CHAT EXECUTION DETAILS */
+
+.chat-execution-details {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding-top: 8px;
+  margin-top: 6px;
+  border-top: 1px solid #f1f5f9;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.chat-execution-details-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.chat-execution-details-item {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.chat-execution-details-item strong {
+  color: #334155;
+}

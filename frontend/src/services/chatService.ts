@@ -16,7 +16,8 @@ export const sendChatMessage = async (
   message: string,
   documentId: string,
   history: ChatHistoryMessage[] = [],
-  agent: string = "orchestrator"
+  agent: string = "orchestrator",
+  extraData?: Record<string, unknown>
 ): Promise<ChatResponse> => {
   if (!documentId) {
     throw new Error("Please upload a document before sending a chat message.");
@@ -31,6 +32,7 @@ export const sendChatMessage = async (
     message: message.trim(),
     history: Array.isArray(history) ? history : [],
     agent: agent || "orchestrator",
+    ...(extraData || {}),
   };
 
   const response = await api.post("/api/chat", payload);
