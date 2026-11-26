@@ -1,62 +1,89 @@
 services:
-  vllm:
-    image: vllm/vllm-openai:v0.10.2
-    command:
-      - --model
-      - /models/DeepSeek-R1-Distill-Qwen-14B
-      - --served-model-name
-      - mortgage-qwen
-      - --dtype
-      - auto
-      - --max-model-len
-      - "16384"
-      - --gpu-memory-utilization
-      - "0.90"
-      - --host
-      - 0.0.0.0
-    environment:
-      HF_HUB_OFFLINE: "1"
-      TRANSFORMERS_OFFLINE: "1"
-    volumes:
-      - ${MODEL_DIR:-./models/DeepSeek-R1-Distill-Qwen-14B}:/models/DeepSeek-R1-Distill-Qwen-14B:ro
-    gpus: all
-    networks:
-      - airgap
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 5m
+  # ==============================================================
+  # 1. PostgreSQL Database Service
+  # ==============================================================
+  db:
+    image: postgres:16-alpine
+    container_name: mortgage_postgres
     restart: unless-stopped
+    environment:
+      POSTGRES_DB: mortgage_ai_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mortgage_ai_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
-  pipeline:
-    image: mortgage-pipeline:offline-v1
+  # ==============================================================
+  # 2. FastAPI Backend Service (Agents, OCR, Parser, Exports)
+  # ==============================================================
+  backend:
     build:
       context: .
       dockerfile: Dockerfile
-    profiles: ["processing"]
+    container_name: mortgage_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
     environment:
-      VLLM_BASE_URL: http://vllm:8000/v1
-      VLLM_MODEL: mortgage-qwen
-      VLLM_TIMEOUT_SECONDS: "600"
+      - APP_ENV=development
+      # Database connection inside Docker network
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=admin
+      - DB_NAME=mortgage_ai_db
+      - DB_TABLE=chat_logs
+      # LLM Engine: connect to local Windows host Ollama via host.docker.internal
+      - LLM_MODE=ollama
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=qwen2.5:1.5b
+      # (Optional) vLLM endpoint configuration if switching LLM_MODE to vllm
+      - VLLM_BASE_URL=http://host.docker.internal:8000/v1
+      - VLLM_MODEL=qwen2.5:1.5b
+      - VLLM_API_KEY=EMPTY
+      - VLLM_TIMEOUT_SECONDS=120
+    extra_hosts:
+      # Allows containers to access host services (like host Ollama) on Windows, Mac, and Linux
+      - "host.docker.internal:host-gateway"
     volumes:
-      - ${INBOX_DIR:-./data/inbox}:/data/inbox:ro
-      - ${OUTBOX_DIR:-./data/outbox}:/data/outbox:rw
-    networks:
-      - airgap
+      - ./exports:/app/exports
+      - ./uploads:/app/uploads
     depends_on:
-      vllm:
+      db:
         condition: service_healthy
-    read_only: true
-    tmpfs:
-      - /tmp:size=512m
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
 
-networks:
-  airgap:
-    driver: bridge
-    internal: true
+  # ==============================================================
+  # 3. Next.js Frontend Service (Chat UI, Reports, Prisma)
+  # ==============================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mortgage_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Connect to PostgreSQL container
+      - DATABASE_URL=postgresql://postgres:admin@db:5432/mortgage_ai_db
+      # Connect server-side requests to FastAPI container
+      - FASTAPI_URL=http://backend:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - UPLOAD_DIR=/app/uploads
+    volumes:
+      - ./uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+
+volumes:
+  postgres_data:

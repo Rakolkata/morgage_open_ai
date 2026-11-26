@@ -1,6 +1,5 @@
 
 import { NextRequest, NextResponse } from "next/server";
-import { Agent } from "undici";
 import { prisma } from "@/lib/prisma";
 import fs from "fs/promises";
 import path from "path";
@@ -14,12 +13,6 @@ const FASTAPI_URL = (
 
 const EXTRACTION_TASK =
   "Extract all critical mortgage values from the uploaded document.";
-
-const fastApiDispatcher = new Agent({
-  headersTimeout: 600000,
-  bodyTimeout: 600000,
-  connectTimeout: 30000,
-});
 
 // --------------------------------------------------
 // FastAPI helper
@@ -69,9 +62,8 @@ async function callFastAPI(
   const response = await fetch(`${FASTAPI_URL}/api/v1/chat`, {
     method: "POST",
     body: formData,
-    dispatcher: fastApiDispatcher,
     signal: AbortSignal.timeout(600000),
-  } as RequestInit);
+  });
 
   const responseText = await response.text();
 
@@ -236,15 +228,27 @@ export async function POST(request: NextRequest) {
     // 2. Validate document storage path
     // --------------------------------------------------
 
-    const uploadsDirectory = path.resolve(
-      process.cwd(),
-      "..",
-      "uploads"
-    );
+    const uploadsDirectory =
+      process.env.UPLOAD_DIR || path.resolve(process.cwd(), "..", "uploads");
 
-    const absoluteFilePath = path.resolve(
-      document.storage_path
-    );
+    let absoluteFilePath = path.resolve(document.storage_path);
+
+    // If file isn't directly accessible at storage_path (e.g. cross-platform Windows vs Docker container),
+    // check if it exists in uploadsDirectory by basename
+    try {
+      await fs.access(absoluteFilePath);
+    } catch {
+      const sanitizedBaseName = path.basename(
+        document.storage_path.replace(/\\/g, "/")
+      );
+      const fallbackPath = path.resolve(uploadsDirectory, sanitizedBaseName);
+      try {
+        await fs.access(fallbackPath);
+        absoluteFilePath = fallbackPath;
+      } catch {
+        // Fall back to original path, will trigger the error below
+      }
+    }
 
     const relativePath = path.relative(
       uploadsDirectory,
@@ -267,7 +271,7 @@ export async function POST(request: NextRequest) {
 
     await fs.access(absoluteFilePath);
 
-    const pdfBuffer = await fs.readFile(absoluteFilePath);
+    const pdfBuffer = await fs.readFile(/*turbopackIgnore: true*/ absoluteFilePath);
 
     if (pdfBuffer.length === 0) {
       return NextResponse.json(

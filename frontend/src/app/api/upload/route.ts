@@ -6,8 +6,9 @@ import path from "path";
 
 export const runtime = "nodejs";
 
-// Save in project root 'uploads' directory
-const uploadDir = path.resolve(process.cwd(), "..", "uploads");
+// Save in project root 'uploads' directory or configured UPLOAD_DIR
+const uploadDir =
+  process.env.UPLOAD_DIR || path.resolve(process.cwd(), "..", "uploads");
 
 function estimatePdfPageCount(buffer: Buffer): number {
   try {
