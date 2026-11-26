@@ -9,6 +9,7 @@ import {
   AlertTriangle,
   FileText,
   Table as TableIcon,
+  Download,
 } from "lucide-react";
 
 import { useState } from "react";
@@ -307,6 +308,20 @@ export default function ChatMessage({
     metadata?.document_id ??
     output?.document_id;
 
+  const downloadUrl =
+    metadata?.download_url ??
+    output?.download_url;
+
+  const downloadFormat =
+    metadata?.download_format ??
+    output?.download_format ??
+    "File";
+
+  const availableDownloads =
+    (metadata?.available_downloads || output?.available_downloads) as
+      | Record<string, string>
+      | undefined;
+
   const documentTypes =
     plan?.document_types ??
     output?.document_types ??
@@ -603,6 +618,50 @@ export default function ChatMessage({
                   </section>
                 )}
 
+              {/* DOWNLOAD SECTION */}
+              {(downloadUrl || availableDownloads) && (
+                <section className="rounded-lg border border-blue-200 bg-blue-50/60 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Download size={18} className="text-blue-600" />
+                    <h3 className="font-semibold text-base text-blue-900">
+                      Download Audited Data
+                    </h3>
+                  </div>
+                  <p className="text-xs text-blue-800 mb-3">
+                    Verified and audited data export ready for download:
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {downloadUrl && (
+                      <a
+                        href={downloadUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition"
+                      >
+                        <Download size={13} />
+                        Download {String(downloadFormat).toUpperCase()}
+                      </a>
+                    )}
+                    {availableDownloads &&
+                      Object.entries(availableDownloads).map(
+                        ([formatKey, urlStr]) =>
+                          urlStr !== downloadUrl && (
+                            <a
+                              key={formatKey}
+                              href={String(urlStr)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-white border border-blue-300 text-blue-900 text-xs font-medium hover:bg-blue-50 transition"
+                            >
+                              <Download size={13} />
+                              {formatKey.toUpperCase()}
+                            </a>
+                          )
+                      )}
+                  </div>
+                </section>
+              )}
+
               {/* RESPONSE DETAILS */}
 
               {(model || fileName || status || documentId) && (
@@ -659,11 +718,65 @@ export default function ChatMessage({
                     parsedFallback.answer
                   );
 
+                  const dlUrl =
+                    parsedFallback.download_url ||
+                    nestedAnswer?.download_url;
+
+                  const dlFormat =
+                    parsedFallback.download_format ||
+                    nestedAnswer?.download_format ||
+                    "File";
+
+                  const availDls =
+                    parsedFallback.available_downloads ||
+                    nestedAnswer?.available_downloads;
+
                   const readableData =
                     nestedAnswer ?? parsedFallback;
 
                   return (
                     <div className="space-y-3">
+                      {(dlUrl || availDls) && (
+                        <div className="rounded-lg border border-blue-200 bg-blue-50/70 p-4 mb-2">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Download size={18} className="text-blue-600" />
+                            <h4 className="font-semibold text-blue-900 text-sm">
+                              Download Audited Data
+                            </h4>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {dlUrl && (
+                              <a
+                                href={dlUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition"
+                              >
+                                <Download size={13} />
+                                Download {String(dlFormat).toUpperCase()}
+                              </a>
+                            )}
+                            {availDls &&
+                              typeof availDls === "object" &&
+                              Object.entries(availDls).map(
+                                ([fmtKey, uStr]) =>
+                                  uStr !== dlUrl && (
+                                    <a
+                                      key={fmtKey}
+                                      href={String(uStr)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-white border border-blue-300 text-blue-900 text-xs font-medium hover:bg-blue-50 transition"
+                                    >
+                                      <Download size={13} />
+                                      {fmtKey.toUpperCase()}
+                                    </a>
+                                  )
+                              )}
+                          </div>
+                        </div>
+                      )}
+
                       {renderReadableValue(readableData)}
 
                       {parsedFallback.model && (

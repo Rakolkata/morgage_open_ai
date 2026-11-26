@@ -20,6 +20,7 @@ interface ChatApiError {
 
 interface ChatApiResponse {
   success?: boolean;
+  error?: string;
   answer?: string;
   response?: string;
   message?: string;
@@ -27,6 +28,9 @@ interface ChatApiResponse {
   agent_output?: Record<string, unknown> | null;
   extraction_plan?: Record<string, unknown> | null;
   extracted_fields?: Record<string, unknown> | null;
+  download_url?: string | null;
+  download_format?: string | null;
+  available_downloads?: Record<string, string> | null;
   status?: string;
   [key: string]: unknown;
 }
@@ -56,6 +60,65 @@ function getResponseContent(response: ChatApiResponse): string {
   return JSON.stringify(response, null, 2);
 }
 
+function extractPlanObject(
+  response: ChatApiResponse
+): Record<string, unknown> | null {
+  if (
+    response.extraction_plan &&
+    typeof response.extraction_plan === "object"
+  ) {
+    return response.extraction_plan as Record<string, unknown>;
+  }
+
+  if (
+    response.agent_output &&
+    typeof response.agent_output === "object"
+  ) {
+    const out = response.agent_output as Record<string, unknown>;
+    if (out.extraction_plan && typeof out.extraction_plan === "object") {
+      return out.extraction_plan as Record<string, unknown>;
+    }
+    if (Array.isArray(out.fields_to_extract)) {
+      return out;
+    }
+  }
+
+  if (typeof response.answer === "string") {
+    try {
+      const parsed = JSON.parse(response.answer);
+      if (parsed && typeof parsed === "object") {
+        if (
+          parsed.extraction_plan &&
+          typeof parsed.extraction_plan === "object"
+        ) {
+          return parsed.extraction_plan as Record<string, unknown>;
+        }
+        if (Array.isArray(parsed.fields_to_extract)) {
+          return parsed as Record<string, unknown>;
+        }
+      }
+    } catch {
+      const match = response.answer.match(
+        /```(?:json)?\s*([\s\S]*?)\s*```/
+      );
+      if (match && match[1]) {
+        try {
+          const parsedFence = JSON.parse(match[1]);
+          if (parsedFence && typeof parsedFence === "object") {
+            if (Array.isArray(parsedFence.fields_to_extract)) {
+              return parsedFence as Record<string, unknown>;
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 export default function useChat() {
   const {
     messages,
@@ -66,6 +129,8 @@ export default function useChat() {
     setCurrentDocument,
     selectedFile,
     setSelectedFile,
+    selectedAgent,
+    refreshExtractedData,
   } = useChatContext();
 
   const sendMessage = async (message: string): Promise<void> => {
@@ -195,83 +260,191 @@ export default function useChat() {
         }));
 
       // ---------------------------------------------
-      // 3. ORCHESTRATOR REQUEST
+      // 3. EXECUTE SELECTED ACTIVE AGENT
       // ---------------------------------------------
 
-      console.log("ORCHESTRATOR API REQUEST STARTED");
+      const normalizedAgent = (selectedAgent || "orchestrator")
+        .trim()
+        .toLowerCase()
+        .replace(/-/g, "_");
+
+      const agentDisplayNameMap: Record<string, string> = {
+        orchestrator: "Orchestrator Agent",
+        data_extractor: "Data Extractor Agent",
+        auditor: "Auditor Agent",
+      };
+
+      const agentDisplayName =
+        agentDisplayNameMap[normalizedAgent] || "AI Agent";
+
+      console.log(`${normalizedAgent.toUpperCase()} API REQUEST STARTED`);
 
       setMessages((previous) => [
         ...previous,
         {
           role: "assistant",
-          agent: "Orchestrator Agent",
-          content: "⏳ Orchestrator API Request Started...",
+          agent: agentDisplayName,
+          content: `⏳ ${agentDisplayName} — Processing request...`,
         },
       ]);
 
-      const orchestratorResponse = (await sendChatMessage(
+      const response = (await sendChatMessage(
         text,
         documentId,
         history,
-        "orchestrator"
+        normalizedAgent
       )) as ChatApiResponse;
 
-      console.log("ORCHESTRATOR RESPONSE:", orchestratorResponse);
+      console.log(`${normalizedAgent.toUpperCase()} RESPONSE:`, response);
 
-      if (orchestratorResponse.success === false) {
-        throw new Error("Orchestrator API failed.");
+      if (response.success === false) {
+        throw new Error(
+          typeof response.error === "string"
+            ? response.error
+            : `${agentDisplayName} failed to respond.`
+        );
       }
 
-      // Display the actual Orchestrator API response.
-      setMessages((previous) => [
-        ...previous,
-        {
+      // Display the actual Agent API response, replacing the pending status message
+      setMessages((previous) => {
+        const updated = [...previous];
+        let pendingIdx = -1;
+
+        for (let i = updated.length - 1; i >= 0; i--) {
+          if (
+            updated[i].role === "assistant" &&
+            updated[i].agent === agentDisplayName &&
+            typeof updated[i].content === "string" &&
+            updated[i].content.startsWith("⏳")
+          ) {
+            pendingIdx = i;
+            break;
+          }
+        }
+
+        const finalMsg: ChatMessage = {
           role: "assistant",
-          agent: orchestratorResponse.agent_name || "Orchestrator Agent",
-          content: getResponseContent(orchestratorResponse),
-        },
-      ]);
+          agent: response.agent_name || agentDisplayName,
+          content: getResponseContent(response),
+        };
 
-      // ---------------------------------------------
-      // 4. DATA EXTRACTOR REQUEST
-      // ---------------------------------------------
+        if (pendingIdx !== -1) {
+          updated[pendingIdx] = finalMsg;
+          return updated;
+        }
 
-      console.log("DATA EXTRACTOR API REQUEST STARTED");
+        return [...updated, finalMsg];
+      });
 
-      setMessages((previous) => [
-        ...previous,
-        {
-          role: "assistant",
-          agent: "Data Extractor Agent",
-          content: "⏳ Data Extractor API Request Started...",
-        },
-      ]);
-
-      const extractorResponse = (await sendChatMessage(
-        text,
-        documentId,
-        history,
-        "data_extractor"
-      )) as ChatApiResponse;
-
-      console.log("DATA EXTRACTOR RESPONSE:", extractorResponse);
-
-      if (extractorResponse.success === false) {
-        throw new Error("Data Extractor API failed.");
+      // Refresh extracted fields in side panel if data extractor or auditor was executed
+      if (normalizedAgent === "data_extractor" || normalizedAgent === "auditor") {
+        try {
+          await refreshExtractedData();
+        } catch (refreshErr) {
+          console.warn("Could not refresh extracted data:", refreshErr);
+        }
       }
 
       // ---------------------------------------------
-      // 5. DISPLAY ACTUAL EXTRACTOR RESPONSE
+      // AUTOMATIC DATA EXTRACTOR TRIGGER (if Orchestrator was executed)
       // ---------------------------------------------
+      if (normalizedAgent === "orchestrator") {
+        const planObj = extractPlanObject(response);
+        const fieldsToExtract = Array.isArray(planObj?.fields_to_extract)
+          ? (planObj.fields_to_extract as string[])
+          : [];
 
-      setMessages((previous) => [
-        ...previous,
-        {
-          role: "assistant",
-          agent: extractorResponse.agent_name || "Data Extractor Agent",
-          content: getResponseContent(extractorResponse),
-        },
-      ]);
+        if (fieldsToExtract.length > 0) {
+          const documentTypes = Array.isArray(planObj?.document_types)
+            ? (planObj.document_types as string[])
+            : ["LE"];
+
+          const instructions = Array.isArray(planObj?.instructions)
+            ? (planObj.instructions as string[])
+            : [];
+
+          const extractorPayload = JSON.stringify(
+            {
+              document_types: documentTypes,
+              fields_to_extract: fieldsToExtract,
+              instructions: instructions,
+            },
+            null,
+            2
+          );
+
+          console.log(
+            "AUTOMATIC TRIGGER: DATA EXTRACTOR WITH PREPARED PLAN:",
+            extractorPayload
+          );
+
+          // Add status message for Data Extractor
+          setMessages((previous) => [
+            ...previous,
+            {
+              role: "assistant",
+              agent: "Data Extractor Agent",
+              content:
+                "⏳ Data Extractor Agent — Extracting fields using orchestrator plan...",
+            },
+          ]);
+
+          const extractorResponse = (await sendChatMessage(
+            extractorPayload,
+            documentId,
+            history,
+            "data_extractor"
+          )) as ChatApiResponse;
+
+          console.log("DATA EXTRACTOR RESPONSE:", extractorResponse);
+
+          if (extractorResponse.success === false) {
+            throw new Error(
+              typeof extractorResponse.error === "string"
+                ? extractorResponse.error
+                : "Data Extractor Agent failed to extract data."
+            );
+          }
+
+          // Replace the Data Extractor pending message with the actual extraction response
+          setMessages((previous) => {
+            const updated = [...previous];
+            let pendingIdx = -1;
+
+            for (let i = updated.length - 1; i >= 0; i--) {
+              if (
+                updated[i].role === "assistant" &&
+                updated[i].agent === "Data Extractor Agent" &&
+                typeof updated[i].content === "string" &&
+                updated[i].content.startsWith("⏳")
+              ) {
+                pendingIdx = i;
+                break;
+              }
+            }
+
+            const extractorMsg: ChatMessage = {
+              role: "assistant",
+              agent: extractorResponse.agent_name || "Data Extractor Agent",
+              content: getResponseContent(extractorResponse),
+            };
+
+            if (pendingIdx !== -1) {
+              updated[pendingIdx] = extractorMsg;
+              return updated;
+            }
+
+            return [...updated, extractorMsg];
+          });
+
+          // Refresh the inspection sidebar
+          try {
+            await refreshExtractedData();
+          } catch (refreshErr) {
+            console.warn("Could not refresh extracted data:", refreshErr);
+          }
+        }
+      }
 
     } catch (error: unknown) {
       console.error("CHAT WORKFLOW ERROR:", error);

@@ -321,47 +321,83 @@ export async function POST(request: NextRequest) {
     // --------------------------------------------------
 
     if (selectedAgent === "data_extractor") {
-      console.log("Preparing extraction plan...");
+      let extractionPlan: any = null;
 
-      // Orchestrator creates the extraction plan.
-      const orchestratorResponse = await callFastAPI(
-        "orchestrator",
-        userMessage,
-        document.filename,
-        pdfBuffer
-      );
+      // 1. Check if userMessage or request body already provides an extraction plan JSON
+      if (
+        body.extraction_plan &&
+        Array.isArray(body.extraction_plan.fields_to_extract)
+      ) {
+        extractionPlan = body.extraction_plan;
+      } else if (
+        body.plan &&
+        Array.isArray(body.plan.fields_to_extract)
+      ) {
+        extractionPlan = body.plan;
+      } else if (typeof userMessage === "string" && userMessage.trim()) {
+        try {
+          const parsed = JSON.parse(userMessage.trim());
+          if (
+            parsed &&
+            typeof parsed === "object" &&
+            Array.isArray(parsed.fields_to_extract)
+          ) {
+            extractionPlan = parsed;
+          } else if (
+            parsed?.extraction_plan &&
+            Array.isArray(parsed.extraction_plan.fields_to_extract)
+          ) {
+            extractionPlan = parsed.extraction_plan;
+          }
+        } catch {
+          // userMessage is not JSON, might be a text guideline
+        }
+      }
 
-      const extractionPlan = getExtractionPlan(
-        orchestratorResponse
-      );
+      // 2. If no valid plan was provided directly, ask Orchestrator to generate one as fallback
+      if (
+        !extractionPlan ||
+        !Array.isArray(extractionPlan.fields_to_extract)
+      ) {
+        console.log("No explicit extraction plan provided. Running Orchestrator Agent...");
+
+        const orchestratorResponse = await callFastAPI(
+          "orchestrator",
+          userMessage,
+          document.filename,
+          pdfBuffer
+        );
+
+        extractionPlan = getExtractionPlan(orchestratorResponse);
+      }
 
       if (
         !extractionPlan ||
-        !Array.isArray(
-          extractionPlan.fields_to_extract
-        )
+        !Array.isArray(extractionPlan.fields_to_extract)
       ) {
         console.error(
           "Invalid extraction plan:",
-          orchestratorResponse
+          extractionPlan
         );
 
         return NextResponse.json(
           {
             success: false,
             error:
-              "Orchestrator did not return a valid extraction plan.",
-            details: orchestratorResponse,
+              "Did not return a valid extraction plan with fields_to_extract.",
+            details: extractionPlan,
           },
-          { status: 502 }
+          { status: 400 }
         );
       }
 
-      console.log("Running Data Extractor Agent...");
+      console.log("Running Data Extractor Agent with plan:", extractionPlan);
 
       const extractorResponse = await callFastAPI(
         "data_extractor",
-        EXTRACTION_TASK,
+        typeof userMessage === "string" && userMessage.trim().startsWith("{")
+          ? userMessage
+          : EXTRACTION_TASK,
         document.filename,
         pdfBuffer,
         extractionPlan
@@ -484,7 +520,6 @@ export async function POST(request: NextRequest) {
 
         model:
           extractorResponse.model ??
-          orchestratorResponse.model ??
           null,
 
         agent_name:
@@ -556,6 +591,9 @@ export async function POST(request: NextRequest) {
         status:
           auditorResponse.status ??
           "success",
+        download_url: auditorResponse.download_url ?? null,
+        download_format: auditorResponse.download_format ?? auditorResponse.file_format ?? null,
+        available_downloads: auditorResponse.available_downloads ?? {},
         document_id: documentId,
         conversation_id: conversationId,
         selected_agent: "auditor",

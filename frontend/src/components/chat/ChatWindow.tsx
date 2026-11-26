@@ -7,7 +7,6 @@ import MessageInput from "./MessageInput";
 import TypingIndicator from "./TypingIndicator";
 
 import { useChatContext } from "../../context/ChatContext";
-import useChat from "../../hooks/useChat";
 import { agentPrompts } from "../../config/agentPrompts";
 
 export default function ChatWindow() {
@@ -17,9 +16,8 @@ export default function ChatWindow() {
     selectedFile,
     currentDocument,
     selectedAgent,
+    setInputPrompt,
   } = useChatContext();
-
-  const { sendMessage } = useChat();
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -36,11 +34,18 @@ export default function ChatWindow() {
   );
 
   // =========================================
-  // AGENT-SPECIFIC PREDEFINED PROMPTS
+  // AGENT-SPECIFIC PREDEFINED PROMPTS (only orchestrator and auditor)
   // =========================================
 
-  const suggestedPrompts =
-    agentPrompts[selectedAgent] || agentPrompts.orchestrator;
+  const normalizedAgentKey = (selectedAgent || "")
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, "_");
+
+  const suggestedPrompts: string[] =
+    normalizedAgentKey === "orchestrator" || normalizedAgentKey === "auditor"
+      ? agentPrompts[normalizedAgentKey] || agentPrompts[selectedAgent] || []
+      : [];
 
   // =========================================
   // AUTO SCROLL
@@ -56,10 +61,10 @@ export default function ChatWindow() {
   // PROMPT CLICK
   // =========================================
 
-  const handlePromptClick = async (prompt: string) => {
-    if (loading || !hasDocument) return;
+  const handlePromptClick = (prompt: string) => {
+    if (loading) return;
 
-    await sendMessage(prompt);
+    setInputPrompt(prompt);
   };
 
   // =========================================
@@ -123,7 +128,8 @@ export default function ChatWindow() {
 
         {hasDocument &&
           messages.length === 0 &&
-          !loading && (
+          !loading &&
+          suggestedPrompts.length > 0 && (
 
             <div className="chat-prompt-dropdown">
 

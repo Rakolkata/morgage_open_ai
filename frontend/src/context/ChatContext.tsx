@@ -84,6 +84,9 @@ interface ChatContextType {
   selectedAgent: string;
   setSelectedAgent: (agent: string) => void;
 
+  inputPrompt: string;
+  setInputPrompt: (prompt: string) => void;
+
   loading: boolean;
   setLoading: React.Dispatch<React.SetStateAction<boolean>>;
 
@@ -158,6 +161,7 @@ export function ChatProvider({
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string>("orchestrator");
+  const [inputPrompt, setInputPrompt] = useState<string>("");
 
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -404,6 +408,7 @@ export function ChatProvider({
     setExtractedFields([]);
     setExtractedDataError(null);
     setSelectedFile(null);
+    setInputPrompt("");
     setActiveConversationId(null);
     setLoading(false);
   };
@@ -452,6 +457,9 @@ export function ChatProvider({
 
     selectedAgent,
     setSelectedAgent,
+
+    inputPrompt,
+    setInputPrompt,
 
     loading,
     setLoading,

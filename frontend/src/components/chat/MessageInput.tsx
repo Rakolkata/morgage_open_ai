@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef } from "react";
 import type { FormEvent, ChangeEvent } from "react";
 import { Send, Paperclip, LoaderCircle } from "lucide-react";
 import useChat from "../../hooks/useChat";
@@ -8,23 +8,36 @@ import { useChatContext } from "../../context/ChatContext";
 import DocumentUpload from "../documents/DocumentUpload";
 
 export default function MessageInput() {
-  const [message, setMessage] = useState<string>("");
   const { sendMessage, loading } = useChat();
-  const { selectedFile, currentDocument } = useChatContext();
+  const {
+    selectedFile,
+    currentDocument,
+    inputPrompt,
+    setInputPrompt,
+  } = useChatContext();
+
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Automatically focus input when a prompt is populated
+  useEffect(() => {
+    if (inputPrompt && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [inputPrompt]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    const text = message.trim();
+    const text = inputPrompt.trim();
 
     if (!text || loading) return;
 
-    setMessage("");
+    setInputPrompt("");
     await sendMessage(text);
   };
 
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setMessage(event.target.value);
+    setInputPrompt(event.target.value);
   };
 
   const placeholderText = selectedFile
@@ -47,8 +60,9 @@ export default function MessageInput() {
           style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%" }}
         >
           <input
+            ref={inputRef}
             type="text"
-            value={message}
+            value={inputPrompt}
             onChange={handleChange}
             placeholder={placeholderText}
             disabled={loading}
@@ -58,7 +72,7 @@ export default function MessageInput() {
           <button
             type="submit"
             className="message-send-button"
-            disabled={!message.trim() || loading}
+            disabled={!inputPrompt.trim() || loading}
             aria-label="Send message"
             title="Send instruction and process document"
           >
