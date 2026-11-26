@@ -1339,74 +1339,138 @@ a {
 }
 
 /* =========================================
-   RESPONSIVE PROMPT CARDS
+   CHAT INPUT PROMPT SUGGESTIONS
 ========================================= */
 
-@media (max-width: 1100px) {
-  .mortgage-prompt-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+.formal-chat-input-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  width: 100%;
 }
 
-@media (max-width: 700px) {
-  .formal-chat-empty {
-    padding: 16px;
-  }
+/* Prompt panel below input */
 
-  .formal-chat-empty-content > h2 {
-    font-size: 18px;
-  }
-
-  .mortgage-prompt-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .mortgage-prompt-card {
-    min-height: auto;
-  }
+.chat-prompt-dropdown {
+  width: 100%;
+  padding: 12px 16px 14px;
+  background: #ffffff;
+  border-top: 1px solid #edf0f4;
+  animation: promptSlideIn 0.2s ease;
 }
-.export-format span {
+
+/* Heading */
+
+.chat-prompt-dropdown-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
   font-size: 11px;
-  color: var(--secondary);
+  font-weight: 600;
+  color: #64748b;
 }
 
-.export-format button {
+/* List */
+
+.chat-prompt-dropdown-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Individual prompt */
+
+.chat-prompt-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+
+  text-align: left;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 500;
+
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.chat-prompt-dropdown-item:hover {
+  background: #f8fafc;
+  border-color: #b8c9dc;
+}
+
+.chat-prompt-dropdown-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Icon */
+
+.chat-prompt-dropdown-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  width: 100%;
-  margin-top: 6px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: #f8fafc;
-  color: var(--secondary);
-  font-size: 11px;
+
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+
+  border-radius: 8px;
+  background: #edf2f8;
+  color: #425c78;
 }
 
-/* SCROLLBAR */
+/* Animation */
 
-* {
-  scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 transparent;
+@keyframes promptSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
+/* Mobile */
 
-::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
+@media (max-width: 650px) {
+  .chat-prompt-dropdown {
+    padding: 10px;
+  }
+
+  .chat-prompt-dropdown-item {
+    padding: 9px;
+  }
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
+/* =========================================
+   RESPONSIVE
+========================================= */
+
+@media (max-width: 1050px) {
+  .mortgage-suggestions-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
-::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 20px;
-}
+@media (max-width: 650px) {
+  .mortgage-suggestions-section {
+    padding: 10px;
+  }
 
+  .mortgage-suggestion-card {
+    padding: 10px;
+  }
+}
 /* RESPONSIVE */
 
 @media (max-width: 1200px) {
