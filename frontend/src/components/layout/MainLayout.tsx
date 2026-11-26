@@ -134,33 +134,36 @@ export default function MainLayout() {
                     document.
                   </p>
 
-                  <div className="flex items-center justify-between w-full mb-4">
-                    <div>
-                      <strong className="text-sm">
+                  <div className="extracted-data-header">
+                    <div className="extracted-doc-info">
+                      <strong className="extracted-doc-title">
                         {documentName}
                       </strong>
                       {pageCount !== null && (
-                        <p className="text-xs text-gray-500">
+                        <p className="extracted-doc-pages">
                           {pageCount} pages
                         </p>
                       )}
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => void refreshExtractedData()}
-                      disabled={extractedDataLoading}
-                      className="icon-button"
-                      title="Refresh extracted data"
-                      aria-label="Refresh extracted data"
-                    >
-                      <RefreshCw
-                        size={17}
-                        className={
-                          extractedDataLoading ? "animate-spin" : ""
-                        }
-                      />
-                    </button>
+                    {extractedFields.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => void refreshExtractedData()}
+                        disabled={extractedDataLoading}
+                        className="extracted-refresh-btn"
+                        title="Refresh extracted data"
+                        aria-label="Refresh extracted data"
+                      >
+                        <RefreshCw
+                          size={14}
+                          className={
+                            extractedDataLoading ? "animate-spin" : ""
+                          }
+                        />
+                        <span>Refresh</span>
+                      </button>
+                    )}
                   </div>
 
                   {extractedDataLoading ? (

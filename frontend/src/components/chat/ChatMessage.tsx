@@ -364,84 +364,67 @@ export default function ChatMessage({
           {structured ? (
             <div className="space-y-5 text-sm leading-6">
 
-              {/* EXTRACTION PLAN */}
+              {/* EXTRACTION PLAN (Simple Chat Format) */}
 
-              {plan?.task && (
-                <section className="rounded-lg border p-4">
-                  <div className="flex items-center gap-2 mb-3">
-                    <FileText size={18} />
+              {(plan?.task || (Array.isArray(plan?.fields_to_extract) && plan.fields_to_extract.length > 0)) && (
+                <div className="chat-plan-container">
+                  <h3 className="chat-plan-heading">
+                    <FileText size={16} />
+                    Extraction Plan
+                  </h3>
 
-                    <h3 className="font-semibold text-base">
-                      Extraction Plan
-                    </h3>
-                  </div>
-
-                  <div className="mb-3">
-                    <p className="font-semibold mb-1">
-                      Task
+                  {plan?.task && (
+                    <p className="chat-plan-task">
+                      <strong>Task:</strong> {plan.task}
                     </p>
+                  )}
 
-                    <p>{plan.task}</p>
-                  </div>
-
-                  {Array.isArray(documentTypes) &&
-                    documentTypes.length > 0 && (
-                      <div className="mb-3">
-                        <p className="font-semibold mb-1">
-                          Document Types
-                        </p>
-
-                        <p>
+                  <div className="chat-plan-metadata">
+                    {Array.isArray(documentTypes) && documentTypes.length > 0 && (
+                      <p>
+                        <strong>Document Types:</strong>{" "}
+                        <span className="chat-plan-code">
                           {documentTypes.join(", ")}
-                        </p>
-                      </div>
+                        </span>
+                      </p>
                     )}
 
-                  {schemaName && (
-                    <div className="mb-3">
-                      <p className="font-semibold mb-1">
-                        Schema
+                    {schemaName && (
+                      <p>
+                        <strong>Schema:</strong>{" "}
+                        <span className="chat-plan-code">
+                          {schemaName}
+                        </span>
                       </p>
+                    )}
+                  </div>
 
-                      <p>{schemaName}</p>
+                  {Array.isArray(plan?.fields_to_extract) && plan.fields_to_extract.length > 0 && (
+                    <div className="chat-plan-group">
+                      <p className="chat-plan-group-title">
+                        <strong>Fields to Extract:</strong>
+                      </p>
+                      <ul className="chat-plan-list">
+                        {plan.fields_to_extract.map((fieldName: string, idx: number) => (
+                          <li key={idx}>{fieldName}</li>
+                        ))}
+                      </ul>
                     </div>
                   )}
 
-                  {Array.isArray(plan.fields_to_extract) &&
-                    plan.fields_to_extract.length > 0 && (
-                      <div className="mb-3">
-                        <p className="font-semibold mb-1">
-                          Fields to Extract
-                        </p>
-
-                        <p>
-                          {plan.fields_to_extract.join(", ")}
-                        </p>
-                      </div>
-                    )}
-
-                  {Array.isArray(plan.instructions) &&
-                    plan.instructions.length > 0 && (
-                      <div className="mt-3">
-                        <p className="font-semibold mb-2">
-                          Instructions
-                        </p>
-
-                        <div className="space-y-2">
-                          {plan.instructions.map(
-                            (
-                              instruction: string,
-                              index: number
-                            ) => (
-                              <p key={index}>
-                                {instruction}
-                              </p>
-                            )
-                          )}
-                        </div>
-                      </div>
-                    )}
-                </section>
+                  {Array.isArray(plan?.instructions) && plan.instructions.length > 0 && (
+                    <div className="chat-plan-group">
+                      <p className="chat-plan-group-title">
+                        <strong>Instructions:</strong>
+                      </p>
+                      <ol className="chat-plan-ordered-list">
+                        {plan.instructions.map((instruction: string, idx: number) => (
+                          <li key={idx}>{instruction}</li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+                </div>
               )}
 
               {/* EXTRACTED VALUES */}
@@ -665,37 +648,34 @@ export default function ChatMessage({
               {/* RESPONSE DETAILS */}
 
               {(model || fileName || status || documentId) && (
-                <section className="border-t pt-4">
-                  <div className="flex items-center gap-2 mb-3">
-                    <FileText size={18} />
-
-                    <h3 className="font-semibold text-base">
-                      Response Details
-                    </h3>
+                <section className="border-t border-slate-200 pt-3 mt-3 text-xs text-slate-500">
+                  <div className="flex items-center gap-2 mb-2 text-slate-700 font-medium">
+                    <FileText size={15} />
+                    <span>Execution Details</span>
                   </div>
 
-                  <div className="space-y-2">
+                  <div className="flex flex-wrap gap-x-5 gap-y-1 text-slate-600">
                     {model && (
-                      <p className="break-words">
+                      <p className="m-0">
                         <strong>Model:</strong> {model}
                       </p>
                     )}
 
                     {fileName && (
-                      <p className="break-words">
+                      <p className="m-0">
                         <strong>File:</strong> {fileName}
                       </p>
                     )}
 
                     {status && (
-                      <p>
+                      <p className="m-0">
                         <strong>Status:</strong> {status}
                       </p>
                     )}
 
                     {documentId && (
-                      <p className="break-all">
-                        <strong>Document ID:</strong> {documentId}
+                      <p className="m-0">
+                        <strong>Doc ID:</strong> {String(documentId).slice(0, 8)}...
                       </p>
                     )}
                   </div>

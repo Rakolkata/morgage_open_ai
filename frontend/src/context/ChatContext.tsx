@@ -349,6 +349,17 @@ export function ChatProvider({
       (conversation) => conversation.id === id
     );
 
+    // Only update and put first if there are actual new or changed messages
+    const hasNewOrChangedMessages =
+      !existingConversation ||
+      messages.length !== (existingConversation.messages?.length ?? 0) ||
+      messages[messages.length - 1]?.content !==
+        existingConversation.messages?.[existingConversation.messages.length - 1]?.content;
+
+    if (!hasNewOrChangedMessages) {
+      return;
+    }
+
     const firstUserMessage = messages.find(
       (message) => message.role === "user"
     );
