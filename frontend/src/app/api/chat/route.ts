@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import fs from "fs/promises";
 import path from "path";
+import { getUploadDir } from "@/lib/paths";
+import { logChatInteraction } from "@/lib/chatLogger";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -228,8 +230,7 @@ export async function POST(request: NextRequest) {
     // 2. Validate document storage path
     // --------------------------------------------------
 
-    const uploadsDirectory =
-      process.env.UPLOAD_DIR || path.resolve(process.cwd(), "..", "uploads");
+    const uploadsDirectory = getUploadDir();
 
     let absoluteFilePath = path.resolve(document.storage_path);
 
@@ -310,11 +311,21 @@ export async function POST(request: NextRequest) {
         orchestratorResponse
       );
 
+      const orchestratorAnswer =
+        orchestratorResponse.answer ??
+        JSON.stringify(orchestratorOutput, null, 2);
+
+      await logChatInteraction({
+        documentId: String(documentId),
+        conversationId,
+        agent: "Orchestrator Agent",
+        message: userMessage,
+        response: orchestratorAnswer,
+      });
+
       return NextResponse.json({
         success: true,
-        answer:
-          orchestratorResponse.answer ??
-          JSON.stringify(orchestratorOutput, null, 2),
+        answer: orchestratorAnswer,
         agent_name:
           orchestratorResponse.agent_name ??
           "Orchestrator Agent",
@@ -524,14 +535,24 @@ export async function POST(request: NextRequest) {
       // Response
       // --------------------------------------------------
 
+      const extractorAnswer = JSON.stringify(
+        normalizedExtractionResult,
+        null,
+        2
+      );
+
+      await logChatInteraction({
+        documentId: String(documentId),
+        conversationId,
+        agent: "Data Extractor Agent",
+        message: userMessage,
+        response: extractorAnswer,
+      });
+
       return NextResponse.json({
         success: true,
 
-        answer: JSON.stringify(
-          normalizedExtractionResult,
-          null,
-          2
-        ),
+        answer: extractorAnswer,
 
         model:
           extractorResponse.model ??
@@ -640,11 +661,21 @@ export async function POST(request: NextRequest) {
         console.warn("Failed to persist audit_result to documents:", dbErr);
       }
 
+      const auditorAnswer =
+        auditorResponse.answer ??
+        JSON.stringify(auditorOutput, null, 2);
+
+      await logChatInteraction({
+        documentId: String(documentId),
+        conversationId,
+        agent: "Auditor Agent",
+        message: userMessage,
+        response: auditorAnswer,
+      });
+
       return NextResponse.json({
         success: true,
-        answer:
-          auditorResponse.answer ??
-          JSON.stringify(auditorOutput, null, 2),
+        answer: auditorAnswer,
         agent_name:
           auditorResponse.agent_name ??
           "Auditor Agent",

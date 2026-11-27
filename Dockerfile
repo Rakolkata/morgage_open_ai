@@ -8,7 +8,6 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         tesseract-ocr \
         tesseract-ocr-eng \
-        libpq-dev \
         gcc \
         curl \
     && rm -rf /var/lib/apt/lists/*
@@ -22,8 +21,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application source code
 COPY app/ ./app/
 
-# Create persistent exports, uploads, and data directories
-RUN mkdir -p /app/exports /app/uploads /app/data
+# Create persistent exports and data directories
+RUN mkdir -p /app/exports /app/data
 
 EXPOSE 8000
 

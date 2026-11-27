@@ -1,6 +1,6 @@
 services:
   # ==============================================================
-  # 1. PostgreSQL Database Service
+  # 1. PostgreSQL Database Service (Accessed ONLY by Frontend)
   # ==============================================================
   db:
     image: postgres:16-alpine
@@ -21,7 +21,7 @@ services:
       retries: 5
 
   # ==============================================================
-  # 2. FastAPI Backend Service (Agents, OCR, Parser, Exports)
+  # 2. FastAPI Backend Service (Stateless Agents & LLM Execution)
   # ==============================================================
   backend:
     build:
@@ -33,13 +33,6 @@ services:
       - "8000:8000"
     environment:
       - APP_ENV=development
-      # Database connection inside Docker network
-      - DB_HOST=db
-      - DB_PORT=5432
-      - DB_USER=postgres
-      - DB_PASSWORD=admin
-      - DB_NAME=mortgage_ai_db
-      - DB_TABLE=chat_logs
       # LLM Engine: connect to local Windows host Ollama via host.docker.internal
       - LLM_MODE=ollama
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
@@ -54,13 +47,9 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./exports:/app/exports
-      - ./uploads:/app/uploads
-    depends_on:
-      db:
-        condition: service_healthy
 
   # ==============================================================
-  # 3. Next.js Frontend Service (Chat UI, Reports, Prisma)
+  # 3. Next.js Frontend Service (Database Owner, Uploads & UI)
   # ==============================================================
   frontend:
     build:
@@ -71,14 +60,15 @@ services:
     ports:
       - "3000:3000"
     environment:
-      # Connect to PostgreSQL container
+      # Connect exclusively to PostgreSQL database
       - DATABASE_URL=postgresql://postgres:admin@db:5432/mortgage_ai_db
-      # Connect server-side requests to FastAPI container
+      # Connect server-side API requests to FastAPI backend
       - FASTAPI_URL=http://backend:8000
       - NEXT_PUBLIC_API_URL=http://localhost:8000
       - UPLOAD_DIR=/app/uploads
     volumes:
-      - ./uploads:/app/uploads
+      # Uploads stored and retrieved exclusively by the frontend
+      - ./frontend/uploads:/app/uploads
     depends_on:
       db:
         condition: service_healthy

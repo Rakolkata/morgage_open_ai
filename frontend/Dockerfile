@@ -16,6 +16,9 @@ RUN npx prisma generate
 # Copy the rest of the frontend source code
 COPY . .
 
+# Ensure uploads directory exists inside frontend container
+RUN mkdir -p /app/uploads
+
 # Build-time environment variable to satisfy Prisma build requirements
 ENV DATABASE_URL="postgresql://postgres:admin@db:5432/mortgage_ai_db"
 ENV NEXT_TELEMETRY_DISABLED=1

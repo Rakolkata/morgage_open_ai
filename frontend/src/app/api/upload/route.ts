@@ -3,12 +3,11 @@ import { prisma } from "@/lib/prisma";
 import { randomUUID } from "crypto";
 import fs from "fs/promises";
 import path from "path";
+import { getUploadDir } from "@/lib/paths";
 
 export const runtime = "nodejs";
 
-// Save in project root 'uploads' directory or configured UPLOAD_DIR
-const uploadDir =
-  process.env.UPLOAD_DIR || path.resolve(process.cwd(), "..", "uploads");
+const uploadDir = getUploadDir();
 
 function estimatePdfPageCount(buffer: Buffer): number {
   try {

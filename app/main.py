@@ -15,7 +15,6 @@ from app.agents import (
     DataExtractorAgent,
     OrchestratorAgent,
 )
-from app.database import init_db, save_chat_log
 from app.document import extract_text_from_file_bytes
 from app.errors import AppError, http_error
 from app.llm import LLMService, get_llm_service
@@ -30,24 +29,14 @@ logger = logging.getLogger(__name__)
 
 
 # ==================================================
-# SERVER LIFESPAN (DATABASE & TABLE INITIALIZATION)
+# SERVER LIFESPAN
 # ==================================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    On server startup:
-    Checks if PostgreSQL database exists; creates it if not.
-    Checks if table exists; creates it if not.
-    Skips creation if both already exist.
-    """
-    logger.info("Server starting up: running PostgreSQL database check...")
-    try:
-        init_db()
-    except Exception as exc:
-        logger.warning("Database check encountered an error: %s", exc)
+    logger.info("FastAPI backend starting up: Agent & LLM Execution Service Ready.")
     yield
-    logger.info("Server shutting down.")
+    logger.info("FastAPI backend shutting down.")
 
 
 # ==================================================
@@ -249,13 +238,6 @@ async def chat(
             output_dict = result.model_dump()
             ans_text = json.dumps(output_dict, indent=2)
 
-            # Store in PostgreSQL database
-            save_chat_log(
-                message=f"[File: {file_name}] {prompt}" if file_name else prompt,
-                agent=agent_instance.name,
-                response=ans_text
-            )
-
             return ChatResponse(
                 answer=ans_text,
                 model=llm.model,
@@ -283,12 +265,6 @@ async def chat(
             )
             output_dict = result.model_dump()
             ans_text = json.dumps(output_dict, indent=2)
-
-            save_chat_log(
-                message=f"[File: {file_name}] {prompt}" if file_name else prompt,
-                agent=agent_instance.name,
-                response=ans_text
-            )
 
             return ChatResponse(
                 answer=ans_text,
@@ -407,12 +383,6 @@ async def chat(
 
             ans_text = "\n".join(ans_lines)
 
-            save_chat_log(
-                message=f"[File: {file_name}] {prompt}" if file_name else prompt,
-                agent=agent_instance.name,
-                response=ans_text
-            )
-
             return ChatResponse(
                 answer=ans_text,
                 model=llm.model,
@@ -438,12 +408,6 @@ async def chat(
 
         llm = LLMService()
         ans = llm.generate(full_chat_prompt)
-
-        save_chat_log(
-            message=f"[File: {file_name}] {prompt}" if file_name else prompt,
-            agent="Default Chat",
-            response=ans
-        )
 
         return ChatResponse(
             answer=ans,

@@ -39,6 +39,7 @@ frontend_backup_before_merge/
 
 # Uploads
 uploads/
+frontend/uploads/
 
 # Exports
 exports/
