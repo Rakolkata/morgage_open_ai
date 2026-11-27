@@ -1,27 +1,6 @@
 services:
   # ==============================================================
-  # 1. PostgreSQL Database Service (Accessed ONLY by Frontend)
-  # ==============================================================
-  db:
-    image: postgres:16-alpine
-    container_name: mortgage_postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: mortgage_ai_db
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: admin
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d mortgage_ai_db"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  # ==============================================================
-  # 2. FastAPI Backend Service (Stateless Agents & LLM Execution)
+  # FastAPI Backend Service (Stateless Agents & LLM Execution)
   # ==============================================================
   backend:
     build:
@@ -32,7 +11,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - APP_ENV=development
+      - APP_ENV=production
       # LLM Engine: connect to local Windows host Ollama via host.docker.internal
       - LLM_MODE=ollama
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
@@ -47,33 +26,3 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./exports:/app/exports
-
-  # ==============================================================
-  # 3. Next.js Frontend Service (Database Owner, Uploads & UI)
-  # ==============================================================
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: mortgage_frontend
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      # Connect exclusively to PostgreSQL database
-      - DATABASE_URL=postgresql://postgres:admin@db:5432/mortgage_ai_db
-      # Connect server-side API requests to FastAPI backend
-      - FASTAPI_URL=http://backend:8000
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
-      - UPLOAD_DIR=/app/uploads
-    volumes:
-      # Uploads stored and retrieved exclusively by the frontend
-      - ./frontend/uploads:/app/uploads
-    depends_on:
-      db:
-        condition: service_healthy
-      backend:
-        condition: service_started
-
-volumes:
-  postgres_data:
