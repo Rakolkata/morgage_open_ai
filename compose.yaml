@@ -1,6 +1,44 @@
 services:
   # ==============================================================
-  # FastAPI Backend Service (Stateless Agents & LLM Execution)
+  # 1. vLLM Engine on NVIDIA RTX A6000 (46 GB VRAM)
+  # ==============================================================
+  vllm:
+    image: vllm/vllm-openai:v0.10.2
+    container_name: mortgage_vllm
+    restart: unless-stopped
+    command:
+      # Model choice:
+      # For DeepSeek 14B: deepseek-ai/DeepSeek-R1-Distill-Qwen-14B (~28GB download)
+      # For a super-fast 1-minute test: Qwen/Qwen2.5-1.5B-Instruct (~3GB download)
+      - --model
+      - deepseek-ai/DeepSeek-R1-Distill-Qwen-14B
+      - --served-model-name
+      - mortgage-qwen
+      - --dtype
+      - auto
+      - --max-model-len
+      - "16384"
+      - --gpu-memory-utilization
+      - "0.88"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    environment:
+      HF_HUB_OFFLINE: "0"
+      TRANSFORMERS_OFFLINE: "0"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ==============================================================
+  # 2. FastAPI Backend Service (Agents & OCR)
   # ==============================================================
   backend:
     build:
@@ -9,20 +47,16 @@ services:
     container_name: mortgage_backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "80:8000"
     environment:
       - APP_ENV=production
-      # LLM Engine: connect to local Windows host Ollama via host.docker.internal
-      - LLM_MODE=ollama
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434
-      - OLLAMA_MODEL=qwen2.5:1.5b
-      # (Optional) vLLM endpoint configuration if switching LLM_MODE to vllm
-      - VLLM_BASE_URL=http://host.docker.internal:8000/v1
-      - VLLM_MODEL=qwen2.5:1.5b
+      - LLM_MODE=vllm
+      # Connects directly to the vLLM container over Docker internal network
+      - VLLM_BASE_URL=http://vllm:8000/v1
+      - VLLM_MODEL=mortgage-qwen
       - VLLM_API_KEY=EMPTY
-      - VLLM_TIMEOUT_SECONDS=120
-    extra_hosts:
-      # Allows containers to access host services (like host Ollama) on Windows, Mac, and Linux
-      - "host.docker.internal:host-gateway"
+      - VLLM_TIMEOUT_SECONDS=300
     volumes:
       - ./exports:/app/exports
+    depends_on:
+      - vllm

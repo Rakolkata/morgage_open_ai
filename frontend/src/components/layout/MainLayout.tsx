@@ -244,7 +244,7 @@ export default function MainLayout() {
 
               {activeTab === "Audit Report" && (
                 auditResult ? (
-                  <section className="extracted-data-panel">
+                  <section className="workspace-placeholder extracted-data-panel">
                     <div className="extracted-data-header">
                       <div>
                         <h2>Audit & Verification Report</h2>
@@ -338,33 +338,28 @@ export default function MainLayout() {
 
                     {/* Detailed Findings Table */}
                     {Array.isArray(auditResult.findings) && auditResult.findings.length > 0 ? (
-                      <div className="placeholder-table mt-4">
-                        <div className="placeholder-table-header audit-grid-header">
-                          <span>Field / Term</span>
-                          <span>Status</span>
-                          <span>Extracted Value</span>
-                          <span>Document Value</span>
-                          <span>Page</span>
-                          <span>Audit Explanation</span>
-                        </div>
+                      <div className="audit-table-scroll-container mt-4">
+                        <div className="placeholder-table">
+                          <div className="placeholder-table-header audit-grid-header">
+                            <span>Field / Term</span>
+                            <span>Status</span>
+                            <span>Extracted Value</span>
+                            <span>Document Value</span>
+                            <span>Page</span>
+                            <span>Audit Explanation</span>
+                          </div>
 
-                        {auditResult.findings.map((f, idx) => {
-                          const isMatch = String(f.status).toUpperCase() === "MATCH";
-                          return (
+                          {auditResult.findings.map((f, idx) => (
                             <div key={idx} className="placeholder-table-row audit-grid-row">
                               <span className="font-semibold text-slate-800">{f.field_path}</span>
-                              <span>
-                                <span className={`status-pill ${isMatch ? "match" : "mismatch"}`}>
-                                  {f.status}
-                                </span>
-                              </span>
+                              <span className="text-slate-700">{f.status ?? "—"}</span>
                               <span className="text-slate-700">{f.extracted_value ?? "—"}</span>
                               <span className="text-slate-700">{f.document_value ?? "—"}</span>
                               <span className="text-slate-500">{f.page ?? "—"}</span>
                               <span className="text-slate-600 text-xs">{f.explanation ?? "—"}</span>
                             </div>
-                          );
-                        })}
+                          ))}
+                        </div>
                       </div>
                     ) : (
                       <p className="text-sm text-slate-500 py-4">No detailed field findings recorded in this audit.</p>
@@ -382,7 +377,7 @@ export default function MainLayout() {
 
               {activeTab === "Export Reports" && (
                 auditResult ? (
-                  <section className="extracted-data-panel">
+                  <section className="workspace-placeholder extracted-data-panel">
                     <div className="extracted-data-header">
                       <div>
                         <h2>Export Reports & Downloads</h2>
